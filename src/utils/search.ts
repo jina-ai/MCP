@@ -19,6 +19,12 @@ export interface SearchArxivArgs {
     tbs?: string;
 }
 
+export interface SearchSsrnArgs {
+    query: string;
+    num?: number;
+    tbs?: string;
+}
+
 export interface SearchImageArgs {
     query: string;
     return_url?: boolean;
@@ -116,6 +122,40 @@ export async function executeArxivSearch(
         return { query: searchArgs.query, results: data.results || [] };
     } catch (error) {
         return { error: `arXiv search failed for query "${searchArgs.query}": ${error instanceof Error ? error.message : String(error)}` };
+    }
+}
+
+/**
+ * Execute a single SSRN search
+ */
+export async function executeSsrnSearch(
+    searchArgs: SearchSsrnArgs,
+    bearerToken: string
+): Promise<SearchResultOrError> {
+    try {
+        const response = await fetch('https://svip.jina.ai/', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${bearerToken}`,
+            },
+            body: JSON.stringify({
+                q: searchArgs.query,
+                domain: 'ssrn',
+                num: searchArgs.num || 30,
+                ...(searchArgs.tbs && { tbs: searchArgs.tbs })
+            }),
+        });
+
+        if (!response.ok) {
+            return { error: `SSRN search failed for query "${searchArgs.query}": ${response.statusText}` };
+        }
+
+        const data = await response.json() as any;
+        return { query: searchArgs.query, results: data.results || [] };
+    } catch (error) {
+        return { error: `SSRN search failed for query "${searchArgs.query}": ${error instanceof Error ? error.message : String(error)}` };
     }
 }
 

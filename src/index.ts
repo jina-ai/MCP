@@ -132,11 +132,13 @@ export default {
 					"guess_datetime_url - Analyze web pages for last update/publish datetime",
 					"search_web - Search the web for current information",
 					"search_arxiv - Search academic papers on arXiv",
+					"search_ssrn - Search academic papers on SSRN (Social Science Research Network)",
 					"search_images - Search for images across the web (similar to Google Images)",
 					"expand_query - Expand and rewrite search queries based on the query expansion model",
 					"parallel_read_url - Read multiple web pages in parallel for content extraction",
 					"parallel_search_web - Run multiple web searches in parallel for topic coverage and diverse perspectives",
 					"parallel_search_arxiv - Run multiple arXiv searches in parallel for research coverage and diverse academic angles",
+					"parallel_search_ssrn - Run multiple SSRN searches in parallel for social science research coverage",
 					"sort_by_relevance - Rerank documents by relevance to a query",
 					"deduplicate_strings - Get top-k semantically unique strings",
 					"deduplicate_images - Get top-k semantically unique images"

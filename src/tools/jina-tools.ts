@@ -8,9 +8,11 @@ import {
 	executeParallelSearches,
 	executeWebSearch,
 	executeArxivSearch,
+	executeSsrnSearch,
 	executeImageSearch,
 	type SearchWebArgs,
 	type SearchArxivArgs,
+	type SearchSsrnArgs,
 	type SearchImageArgs,
 	formatSingleSearchResultToContentItems,
 	formatParallelSearchResultsToContentItems
@@ -408,6 +410,60 @@ export function registerJinaTools(server: McpServer, getProps: () => any) {
 		},
 	);
 
+	// Search SSRN tool - search SSRN papers using Jina Search API
+	server.tool(
+		"search_ssrn",
+		"Search academic papers and preprints on SSRN (Social Science Research Network). Perfect for finding research papers in social sciences, economics, law, finance, accounting, management, and humanities. Use this when researching social science topics, looking for working papers, or finding the latest research in business and economics fields.",
+		{
+			query: z.union([z.string(), z.array(z.string())]).describe("Academic search terms, author names, or research topics (e.g., 'corporate governance', 'behavioral finance', 'contract law'). Can be a single query string or an array of queries for parallel search."),
+			num: z.number().default(30).describe("Maximum number of academic papers to return, between 1-100"),
+			tbs: z.string().optional().describe("Time-based search parameter, e.g., 'qdr:h' for past hour, can be qdr:h, qdr:d, qdr:w, qdr:m, qdr:y")
+		},
+		async ({ query, num, tbs }: { query: string | string[]; num: number; tbs?: string }) => {
+			try {
+				const props = getProps();
+
+				const tokenError = checkBearerToken(props.bearerToken);
+				if (tokenError) {
+					return tokenError;
+				}
+
+				// Handle single query or single-element array
+				if (typeof query === 'string' || (Array.isArray(query) && query.length === 1)) {
+					const singleQuery = typeof query === 'string' ? query : query[0];
+					const searchResult = await executeSsrnSearch({ query: singleQuery, num, tbs }, props.bearerToken);
+
+					return {
+						content: formatSingleSearchResultToContentItems(searchResult),
+					};
+				}
+
+				// Handle multiple queries with parallel search
+				if (Array.isArray(query) && query.length > 1) {
+					const searches = query.map(q => ({ query: q, num, tbs }));
+
+					const uniqueSearches = searches.filter((search, index, self) =>
+						index === self.findIndex(s => s.query === search.query)
+					);
+
+					const ssrnSearchFunction = async (searchArgs: SearchSsrnArgs) => {
+						return executeSsrnSearch(searchArgs, props.bearerToken);
+					};
+
+					const results = await executeParallelSearches(uniqueSearches, ssrnSearchFunction, { timeout: 30000 });
+
+					return {
+						content: formatParallelSearchResultsToContentItems(results),
+					};
+				}
+
+				return createErrorResponse("Invalid query format");
+			} catch (error) {
+				return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+			}
+		},
+	);
+
 	// Search Images tool - search for images on the web using Jina Search API
 	server.tool(
 		"search_images",
@@ -569,6 +625,48 @@ export function registerJinaTools(server: McpServer, getProps: () => any) {
 
 				// Execute parallel searches using utility
 				const results = await executeParallelSearches(uniqueSearches, arxivSearchFunction, { timeout });
+
+				return {
+					content: formatParallelSearchResultsToContentItems(results),
+				};
+			} catch (error) {
+				return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+			}
+		},
+	);
+
+	// Parallel Search SSRN tool - execute multiple SSRN searches in parallel
+	server.tool(
+		"parallel_search_ssrn",
+		"Run multiple SSRN searches in parallel for comprehensive social science research coverage and diverse academic angles. For best results, provide multiple search queries that explore different research angles and methodologies. You can use expand_query to help generate diverse queries, or create them yourself.",
+		{
+			searches: z.array(z.object({
+				query: z.string().describe("Academic search terms, author names, or research topics"),
+				num: z.number().default(30).describe("Maximum number of academic papers to return, between 1-100"),
+				tbs: z.string().optional().describe("Time-based search parameter, e.g., 'qdr:h' for past hour")
+			})).max(5).describe("Array of SSRN search configurations to execute in parallel (maximum 5 searches for optimal performance)"),
+			timeout: z.number().default(30000).describe("Timeout in milliseconds for all searches")
+		},
+		async ({ searches, timeout }: { searches: SearchSsrnArgs[]; timeout: number }) => {
+			try {
+				const props = getProps();
+
+				const tokenError = checkBearerToken(props.bearerToken);
+				if (tokenError) {
+					return tokenError;
+				}
+
+				const uniqueSearches = searches.filter((search, index, self) =>
+					index === self.findIndex(s => s.query === search.query)
+				);
+
+				// Use the common SSRN search function
+				const ssrnSearchFunction = async (searchArgs: SearchSsrnArgs) => {
+					return executeSsrnSearch(searchArgs, props.bearerToken);
+				};
+
+				// Execute parallel searches using utility
+				const results = await executeParallelSearches(uniqueSearches, ssrnSearchFunction, { timeout });
 
 				return {
 					content: formatParallelSearchResultsToContentItems(results),
