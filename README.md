@@ -134,6 +134,14 @@ alwaysApply: true
 When you are uncertain about knowledge, or the user doubts your answer, always use Jina MCP tools to search and read best practices and latest information. Use search_arxiv and read_url together when questions relate to theoretical deep learning or algorithm details. Use search_ssrn for social sciences, economics, law, and finance research. search_web, search_arxiv, and search_ssrn cannot be used alone - always combine with read_url or parallel_read_url to read from multiple sources. Remember: every search must be complemented with read_url to read the source URL content. For maximum efficiency, use parallel_* versions of search and read when necessary.
 ```
 
+### Why is my content truncated?
+
+Claude Code, Claude Desktop, and Cursor enforce a fixed 25k token limit on MCP tool responses. To prevent these clients from rejecting large responses entirely, this server applies a token guardrail specifically for `read_url` and `parallel_read_url` tools when connecting from these clients. For a single large content item, the text is truncated proportionally to fit within the token budget. For responses containing multiple items, the server keeps items in order until adding the next item would exceed the limit, then stops there. This ensures the response always fits within client constraints while preserving as much content as possible. Other clients like OpenAI Codex have configurable limits (`tool_output_token_limit` in config) so no server-side truncation is applied.
+
+### Using parallel tools vs singleton tools with arrays
+
+Claude Code recently started preferring `parallel_*` tools (like `parallel_search_web`, `parallel_read_url`) for concurrent operations. However, models like Qwen3-Next prefer calling singleton tools with multiple queries in an array. Both approaches work: the singleton versions (`search_web`, `search_arxiv`, `search_ssrn`, `read_url`) accept either a single string or an array of strings for the query/url parameter. When given an array, these tools automatically execute all queries in parallel internally, producing the same concurrent behavior as explicitly calling `parallel_*` tools. Use whichever style your model prefers.
+
 ## Developer Guide
 
 ### Local Development

@@ -4,6 +4,7 @@ import { stringify as yamlStringify } from "yaml";
 import { handleApiError, checkBearerToken } from "../utils/api-error-handler.js";
 import { lazyGreedySelection, lazyGreedySelectionWithSaturation } from "../utils/submodular-optimization.js";
 import { downloadImages } from "../utils/image-downloader.js";
+import { applyTokenGuardrail } from "../utils/token-guardrail.js";
 import {
 	executeParallelSearches,
 	executeWebSearch,
@@ -20,6 +21,8 @@ import {
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 export function registerJinaTools(server: McpServer, getProps: () => any) {
+	// Helper to get client name for guardrail check
+	const getClientName = () => server.server.getClientVersion()?.name;
 	// Helper function to create error responses
 	const createErrorResponse = (message: string) => ({
 		content: [{ type: "text" as const, text: message }],
@@ -192,12 +195,12 @@ export function registerJinaTools(server: McpServer, getProps: () => any) {
 						return createErrorResponse(result.error);
 					}
 
-					return {
+					return applyTokenGuardrail({
 						content: [{
 							type: "text" as const,
 							text: yamlStringify(result.structuredData),
 						}],
-					};
+					}, props.bearerToken, getClientName());
 				}
 
 				// Handle multiple URLs with parallel reading
@@ -231,9 +234,9 @@ export function registerJinaTools(server: McpServer, getProps: () => any) {
 						}
 					}
 
-					return {
+					return applyTokenGuardrail({
 						content: contentItems,
-					};
+					}, props.bearerToken, getClientName());
 				}
 
 				return createErrorResponse("Invalid URL format");
@@ -715,9 +718,9 @@ export function registerJinaTools(server: McpServer, getProps: () => any) {
 					}
 				}
 
-				return {
+				return applyTokenGuardrail({
 					content: contentItems,
-				};
+				}, props.bearerToken, getClientName());
 			} catch (error) {
 				return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
 			}
