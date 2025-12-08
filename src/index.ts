@@ -4,8 +4,87 @@ import { registerJinaTools } from "./tools/jina-tools.js";
 import { stringify as yamlStringify } from "yaml";
 
 // Build-time constants (can be replaced by build tools)
-const SERVER_VERSION = "1.2.0"; // This could be replaced by CI/CD
+const SERVER_VERSION = "1.3.0"; // This could be replaced by CI/CD
 const SERVER_NAME = "jina-mcp";
+
+// Tool tags mapping for filtering
+const TOOL_TAGS: Record<string, string[]> = {
+	search: ["search_web", "search_arxiv", "search_ssrn", "search_images"],
+	parallel: ["parallel_search_web", "parallel_search_arxiv", "parallel_search_ssrn", "parallel_read_url"],
+	read: ["read_url", "parallel_read_url", "capture_screenshot_url"],
+	utility: ["primer", "show_api_key", "expand_query", "guess_datetime_url"],
+	rerank: ["sort_by_relevance", "deduplicate_strings", "deduplicate_images"],
+};
+
+// All available tools
+const ALL_TOOLS = [
+	"primer", "show_api_key", "read_url", "capture_screenshot_url", "guess_datetime_url",
+	"search_web", "search_arxiv", "search_ssrn", "search_images", "expand_query",
+	"parallel_search_web", "parallel_search_arxiv", "parallel_search_ssrn", "parallel_read_url",
+	"sort_by_relevance", "deduplicate_strings", "deduplicate_images"
+];
+
+// Parse tool filter from query parameters
+function parseToolFilter(url: URL): Set<string> | null {
+	const includeTools = url.searchParams.get("include_tools");
+	const excludeTools = url.searchParams.get("exclude_tools");
+	const includeTags = url.searchParams.get("include_tags");
+	const excludeTags = url.searchParams.get("exclude_tags");
+
+	// If no filters specified, return null (all tools enabled)
+	if (!includeTools && !excludeTools && !includeTags && !excludeTags) {
+		return null;
+	}
+
+	// Start with all tools, unless include_tags or include_tools is specified (then start empty)
+	let enabledTools = (includeTags || includeTools)
+		? new Set<string>()
+		: new Set<string>(ALL_TOOLS);
+
+	// Apply include_tags first (lowest priority) - add tagged tools
+	if (includeTags) {
+		const tags = includeTags.split(",").map(t => t.trim().toLowerCase());
+		for (const tag of tags) {
+			if (TOOL_TAGS[tag]) {
+				for (const tool of TOOL_TAGS[tag]) {
+					enabledTools.add(tool);
+				}
+			}
+		}
+	}
+
+	// Apply include_tools - add specific tools
+	if (includeTools) {
+		const tools = includeTools.split(",").map(t => t.trim());
+		for (const tool of tools) {
+			if (ALL_TOOLS.includes(tool)) {
+				enabledTools.add(tool);
+			}
+		}
+	}
+
+	// Apply exclude_tags - remove tagged tools
+	if (excludeTags) {
+		const tags = excludeTags.split(",").map(t => t.trim().toLowerCase());
+		for (const tag of tags) {
+			if (TOOL_TAGS[tag]) {
+				for (const tool of TOOL_TAGS[tag]) {
+					enabledTools.delete(tool);
+				}
+			}
+		}
+	}
+
+	// Apply exclude_tools last (highest priority) - remove specific tools
+	if (excludeTools) {
+		const tools = excludeTools.split(",").map(t => t.trim());
+		for (const tool of tools) {
+			enabledTools.delete(tool);
+		}
+	}
+
+	return enabledTools;
+}
 
 // Define our MCP agent with tools
 export class MyMCP extends McpAgent {
@@ -17,8 +96,9 @@ export class MyMCP extends McpAgent {
 
 
 	async init() {
-		// Register all Jina AI tools
-		registerJinaTools(this.server, () => this.props);
+		// Register all Jina AI tools with optional filtering
+		const enabledTools = this.props.enabledTools as Set<string> | null;
+		registerJinaTools(this.server, () => this.props, enabledTools);
 	}
 }
 
@@ -27,10 +107,15 @@ export default {
 		const url = new URL(request.url);
 		const cf = request.cf;
 
+		// Parse tool filter from query parameters
+		const enabledTools = parseToolFilter(url);
+
 		// Extract bearer token from Authorization header
 		const authHeader = request.headers.get("Authorization");
 		if (authHeader?.startsWith("Bearer ")) {
-			ctx.props = { bearerToken: authHeader.substring(7) };
+			ctx.props = { bearerToken: authHeader.substring(7), enabledTools };
+		} else {
+			ctx.props = { enabledTools };
 		}
 
 		// if no bearer token add a debug one from env 
@@ -124,6 +209,22 @@ export default {
 				endpoints: {
 					sse: "/sse - Server-Sent Events endpoint (recommended)",
 					mcp: "/mcp - Standard JSON-RPC endpoint"
+				},
+				tool_filtering: {
+					description: "Reduce token usage by filtering tools via query parameters",
+					parameters: {
+						exclude_tools: "Comma-separated tool names to exclude (e.g., search_web,search_arxiv)",
+						include_tools: "Comma-separated tool names to include",
+						exclude_tags: "Comma-separated tags to exclude (e.g., parallel,search)",
+						include_tags: "Comma-separated tags to include"
+					},
+					tags: TOOL_TAGS,
+					examples: [
+						"/sse?exclude_tags=parallel - Exclude all parallel_* tools",
+						"/sse?include_tags=search,read - Only include search and read tools",
+						"/sse?exclude_tools=search_images,deduplicate_images - Exclude specific tools"
+					],
+					precedence: "exclude_tools > exclude_tags > include_tools > include_tags"
 				},
 				tools: [
 					"primer - Provide timezone-aware timestamps, user location, network details, and client context",

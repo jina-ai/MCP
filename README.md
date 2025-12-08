@@ -74,11 +74,86 @@ For OpenAI Codex: find `~/.codex/config.toml` and add the following:
 [mcp_servers.jina-mcp-server]
 command = "npx"
 args = [
-    "-y", 
-    "mcp-remote", 
+    "-y",
+    "mcp-remote",
     "https://mcp.jina.ai/sse",
     "--header",
     "Authorization: Bearer ${JINA_API_KEY}"]
+```
+
+## Tool Filtering
+
+To reduce token usage, you can filter which tools are exposed via query parameters on the endpoint URL.
+
+### Query Parameters
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `exclude_tools` | Comma-separated tool names to exclude | `exclude_tools=search_web,search_arxiv` |
+| `include_tools` | Comma-separated tool names to include | `include_tools=read_url,search_web` |
+| `exclude_tags` | Comma-separated tags to exclude | `exclude_tags=parallel,rerank` |
+| `include_tags` | Comma-separated tags to include | `include_tags=search,read` |
+
+### Available Tags
+
+| Tag | Tools |
+|-----|-------|
+| `search` | search_web, search_arxiv, search_ssrn, search_images |
+| `parallel` | parallel_search_web, parallel_search_arxiv, parallel_search_ssrn, parallel_read_url |
+| `read` | read_url, parallel_read_url, capture_screenshot_url |
+| `utility` | primer, show_api_key, expand_query, guess_datetime_url |
+| `rerank` | sort_by_relevance, deduplicate_strings, deduplicate_images |
+
+### Precedence
+
+Filters are applied in this order (highest to lowest priority):
+1. `exclude_tools` - Always excludes specified tools
+2. `exclude_tags` - Excludes tools in specified tags
+3. `include_tools` - Includes specified tools
+4. `include_tags` - Starts with only tools in specified tags
+
+### Examples
+
+Exclude parallel tools (reduces token usage significantly):
+```json
+{
+  "mcpServers": {
+    "jina-mcp-server": {
+      "url": "https://mcp.jina.ai/sse?exclude_tags=parallel",
+      "headers": {
+        "Authorization": "Bearer ${JINA_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+Only include search and read tools:
+```json
+{
+  "mcpServers": {
+    "jina-mcp-server": {
+      "url": "https://mcp.jina.ai/sse?include_tags=search,read",
+      "headers": {
+        "Authorization": "Bearer ${JINA_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+Exclude specific tools:
+```json
+{
+  "mcpServers": {
+    "jina-mcp-server": {
+      "url": "https://mcp.jina.ai/sse?exclude_tools=search_images,deduplicate_images",
+      "headers": {
+        "Authorization": "Bearer ${JINA_API_KEY}"
+      }
+    }
+  }
+}
 ```
 
 ## Troubleshooting
@@ -141,6 +216,31 @@ Claude Code, Claude Desktop, and Cursor enforce a fixed 25k token limit on MCP t
 ### Using parallel tools vs singleton tools with arrays
 
 Claude Code recently started preferring `parallel_*` tools (like `parallel_search_web`, `parallel_read_url`) for concurrent operations. However, models like Qwen3-Next prefer calling singleton tools with multiple queries in an array. Both approaches work: the singleton versions (`search_web`, `search_arxiv`, `search_ssrn`, `read_url`) accept either a single string or an array of strings for the query/url parameter. When given an array, these tools automatically execute all queries in parallel internally, producing the same concurrent behavior as explicitly calling `parallel_*` tools. Use whichever style your model prefers.
+
+### Alternative: Client-side tool filtering with mcp-remote
+
+If you're using [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) as a local proxy, you can also filter tools client-side using its `--ignore-tool` flag:
+
+```json
+{
+  "mcpServers": {
+    "jina-mcp-server": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.jina.ai/sse",
+        "--header",
+        "Authorization: Bearer ${JINA_API_KEY}",
+        "--ignore-tool", "parallel_search_web",
+        "--ignore-tool", "parallel_search_arxiv",
+        "--ignore-tool", "parallel_read_url"
+      ]
+    }
+  }
+}
+```
+
+This approach filters tools at the proxy level before they reach the MCP client. However, server-side filtering via query parameters (see [Tool Filtering](#tool-filtering)) is more efficient as it reduces token usage from the source.
 
 ## Developer Guide
 
