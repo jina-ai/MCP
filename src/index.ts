@@ -2,15 +2,6 @@ import { createMcpHandler } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerJinaTools } from "./tools/jina-tools.js";
 import { stringify as yamlStringify } from "yaml";
-import { DurableObject } from "cloudflare:workers";
-
-// Stub class for migration - will be deleted after migration completes
-// TODO: Remove this class and the durable_objects config after successful deployment
-export class MyMCP extends DurableObject {
-	async fetch(_request: Request): Promise<Response> {
-		return new Response("This Durable Object is being deprecated", { status: 410 });
-	}
-}
 
 // Build-time constants (can be replaced by build tools)
 const SERVER_VERSION = "1.4.0"; // Bumped version for stateless rewrite
