@@ -234,7 +234,7 @@ This works seamlessly because:
 
 The response streaming still uses SSE format (`Content-Type: text/event-stream`), but the protocol layer (session management, initialization) follows Streamable HTTP spec. All major MCP clients are compatible.
 
-### Alternative: Client-side tool filtering with mcp-remote
+### Client-side tool filtering with mcp-remote
 
 If you're using [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) as a local proxy, you can also filter tools client-side using its `--ignore-tool` flag:
 
