@@ -23,6 +23,7 @@ A remote Model Context Protocol (MCP) server that provides access to Jina Reader
 | `sort_by_relevance` | Rerank documents by relevance to a query via [Reranker API](https://jina.ai/reranker) | Yes |
 | `deduplicate_strings` | Get top-k semantically unique strings via [Embeddings API](https://jina.ai/embeddings) and [submodular optimization](https://jina.ai/news/submodular-optimization-for-diverse-query-generation-in-deepresearch) | Yes |
 | `deduplicate_images` | Get top-k semantically unique images via [Embeddings API](https://jina.ai/embeddings) and [submodular optimization](https://jina.ai/news/submodular-optimization-for-diverse-query-generation-in-deepresearch) | Yes |
+| `extract_pdf` | Extract figures, tables, and equations from PDF documents (arXiv papers or any PDF URL) using layout detection | Yes |
 
 > Optional tools work without an API key but have [rate limits](https://jina.ai/api-dashboard/rate-limit). For higher rate limits and better performance, use a Jina API key. You can get a free Jina API key from [https://jina.ai](https://jina.ai)
 
@@ -110,7 +111,7 @@ By filtering tools server-side via query parameters on the endpoint URL (`/v1?..
 | `search` | search_web, search_arxiv, search_ssrn, search_images, search_jina_blog |
 | `parallel` | parallel_search_web, parallel_search_arxiv, parallel_search_ssrn, parallel_read_url |
 | `read` | read_url, parallel_read_url, capture_screenshot_url |
-| `utility` | primer, show_api_key, expand_query, guess_datetime_url |
+| `utility` | primer, show_api_key, expand_query, guess_datetime_url, extract_pdf |
 | `rerank` | sort_by_relevance, deduplicate_strings, deduplicate_images |
 
 ### Precedence

@@ -1105,4 +1105,114 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			},
 		);
 	}
+
+	// Extract PDF tool - extract figures, tables, and equations from PDF documents
+	if (isToolEnabled("extract_pdf")) {
+		server.tool(
+			"extract_pdf",
+			"Extract figures, tables, and equations from PDF documents using layout detection. Perfect for extracting visual elements from academic papers on arXiv or any PDF URL. Returns base64-encoded images of detected elements with metadata.",
+			{
+				id: z.string().optional().describe("arXiv paper ID (e.g., '2301.12345' or 'hep-th/9901001'). Either id or url is required."),
+				url: z.string().url().optional().describe("Direct PDF URL. Either id or url is required."),
+				max_edge: z.number().default(1024).describe("Maximum edge size for extracted images in pixels (default: 1024)")
+			},
+			async ({ id, url, max_edge }: { id?: string; url?: string; max_edge: number }) => {
+				try {
+					const props = getProps();
+
+					const tokenError = checkBearerToken(props.bearerToken);
+					if (tokenError) {
+						return tokenError;
+					}
+
+					if (!id && !url) {
+						return createErrorResponse("Either 'id' (arXiv paper ID) or 'url' (PDF URL) is required");
+					}
+
+					// Build request body
+					const requestBody: Record<string, any> = {};
+					if (id) requestBody.id = id;
+					if (url) requestBody.url = url;
+					if (max_edge) requestBody.max_edge = max_edge;
+
+					const response = await fetch('https://svip.jina.ai/extract-pdf', {
+						method: 'POST',
+						headers: {
+							'Accept': 'application/json',
+							'Content-Type': 'application/json',
+							'Authorization': `Bearer ${props.bearerToken}`,
+						},
+						body: JSON.stringify(requestBody),
+					});
+
+					if (!response.ok) {
+						return handleApiError(response, "PDF extraction");
+					}
+
+					const data = await response.json() as {
+						id: string;
+						floats: Array<{
+							type: string;
+							number: string;
+							caption: string;
+							page: number;
+							image: string;
+							width: number;
+							height: number;
+						}>;
+						meta: {
+							latency: number;
+							num_floats: number;
+							num_pages: number;
+							total_bytes: number;
+							credits: number;
+							tokens: number;
+						};
+					};
+
+					// Return each float as an image with metadata
+					const contentItems: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [];
+
+					// Add summary metadata
+					contentItems.push({
+						type: "text" as const,
+						text: yamlStringify({
+							id: data.id,
+							num_floats: data.meta.num_floats,
+							num_pages: data.meta.num_pages,
+							latency_ms: data.meta.latency
+						}),
+					});
+
+					// Add each float as an image with its metadata
+					for (const float of data.floats) {
+						// Add metadata for this float
+						contentItems.push({
+							type: "text" as const,
+							text: yamlStringify({
+								type: float.type,
+								number: float.number,
+								caption: float.caption,
+								page: float.page,
+								dimensions: `${float.width}x${float.height}`
+							}),
+						});
+
+						// Add the image
+						contentItems.push({
+							type: "image" as const,
+							data: float.image,
+							mimeType: "image/png",
+						});
+					}
+
+					return {
+						content: contentItems,
+					};
+				} catch (error) {
+					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+				}
+			},
+		);
+	}
 }

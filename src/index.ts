@@ -12,7 +12,7 @@ const TOOL_TAGS: Record<string, string[]> = {
 	search: ["search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog"],
 	parallel: ["parallel_search_web", "parallel_search_arxiv", "parallel_search_ssrn", "parallel_read_url"],
 	read: ["read_url", "parallel_read_url", "capture_screenshot_url"],
-	utility: ["primer", "show_api_key", "expand_query", "guess_datetime_url"],
+	utility: ["primer", "show_api_key", "expand_query", "guess_datetime_url", "extract_pdf"],
 	rerank: ["sort_by_relevance", "deduplicate_strings", "deduplicate_images"],
 };
 
@@ -21,7 +21,7 @@ const ALL_TOOLS = [
 	"primer", "show_api_key", "read_url", "capture_screenshot_url", "guess_datetime_url",
 	"search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog", "expand_query",
 	"parallel_search_web", "parallel_search_arxiv", "parallel_search_ssrn", "parallel_read_url",
-	"sort_by_relevance", "deduplicate_strings", "deduplicate_images"
+	"sort_by_relevance", "deduplicate_strings", "deduplicate_images", "extract_pdf"
 ];
 
 // Parse tool filter from query parameters
@@ -274,7 +274,8 @@ export default {
 					"parallel_search_ssrn - Run multiple SSRN searches in parallel for social science research coverage",
 					"sort_by_relevance - Rerank documents by relevance to a query",
 					"deduplicate_strings - Get top-k semantically unique strings",
-					"deduplicate_images - Get top-k semantically unique images"
+					"deduplicate_images - Get top-k semantically unique images",
+					"extract_pdf - Extract figures, tables, and equations from PDF documents"
 				]
 			};
 
