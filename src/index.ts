@@ -89,12 +89,54 @@ function parseToolFilter(url: URL): Set<string> | null {
 // Props storage for the current request (used by tools)
 let currentProps: Record<string, unknown> = {};
 
+// Server instructions for MCP tool discovery (SEO for LLM tool search)
+// Key principle: be specific to win relevant queries, avoid generic terms that cause false positives
+const SERVER_INSTRUCTIONS = `Web access and online content retrieval server.
+
+WHEN TO USE THIS SERVER:
+
+Web Search (use when user wants to find something ONLINE, not local files):
+- "search the web for...", "google...", "look up online...", "find on the internet..."
+- "what's the latest news on...", "current events about...", "recent updates on..."
+- Any query needing real-time or up-to-date information from the internet
+
+URL/Webpage Reading (use when user provides a URL or link):
+- "read this URL: https://...", "what does this webpage say...", "summarize this link..."
+- "fetch the content from...", "extract text from this website..."
+- Any task involving a specific URL, http link, or webpage
+
+Academic Paper Search (use for scholarly/research queries):
+- "search arXiv for...", "find papers on arXiv about..."
+- "search SSRN for...", "find economics/finance/law papers..."
+- "find academic papers about...", "what research exists on..."
+
+Image Search (use when user wants to find images online):
+- "search for images of...", "find pictures of...", "find photos of..."
+
+Screenshot Capture (use when user wants to SEE a webpage):
+- "take a screenshot of this URL...", "capture this webpage visually..."
+- "show me what this website looks like..."
+
+Semantic Reranking/Deduplication:
+- "rerank these results by relevance to...", "sort by semantic similarity..."
+- "deduplicate these texts/images...", "find unique items from..."
+
+PDF Extraction:
+- "extract figures from this PDF...", "get tables from PDF...", "extract equations from PDF..."
+
+NOT FOR: local file operations, code execution, database queries, non-web APIs.`;
+
 // Create the MCP server instance
 function createServer(enabledTools: Set<string> | null) {
-	const server = new McpServer({
-		name: "Jina AI Official MCP Server",
-		version: SERVER_VERSION,
-	});
+	const server = new McpServer(
+		{
+			name: "Jina AI Official MCP Server",
+			version: SERVER_VERSION,
+		},
+		{
+			instructions: SERVER_INSTRUCTIONS,
+		}
+	);
 
 	// Register all Jina AI tools with optional filtering
 	registerJinaTools(server, () => currentProps, enabledTools);
