@@ -1106,6 +1106,59 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 		);
 	}
 
+	// Search BibTeX tool - search for academic papers and return BibTeX citations
+	if (isToolEnabled("search_bibtex")) {
+		server.tool(
+			"search_bibtex",
+			"Search for academic papers and return BibTeX citations. Searches DBLP (computer science) and Semantic Scholar (broad academic coverage) for comprehensive results. Returns formatted BibTeX entries ready to use in LaTeX documents.",
+			{
+				query: z.string().describe("Search query - paper title, topic, or keywords (e.g., 'attention is all you need', 'transformer neural networks', 'deep learning optimization')"),
+				num: z.number().min(1).max(50).default(10).describe("Maximum number of results to return (1-50, default: 10)"),
+				year: z.number().optional().describe("Filter by minimum publication year (e.g., 2020 for papers from 2020 onwards)"),
+				author: z.string().optional().describe("Filter by author name (e.g., 'Vaswani', 'Hinton')")
+			},
+			async ({ query, num, year, author }: { query: string; num: number; year?: number; author?: string }) => {
+				try {
+					// Import the utility function
+					const { searchBibtex } = await import("../utils/bibtex.js");
+
+					// Execute search
+					const results = await searchBibtex({ query, num, year, author });
+
+					if (results.length === 0) {
+						return {
+							content: [{
+								type: "text" as const,
+								text: "No results found. Try different search terms or broader keywords."
+							}]
+						};
+					}
+
+					// Format results
+					const formattedResults = results.map(entry => ({
+						title: entry.title,
+						authors: entry.authors,
+						year: entry.year,
+						venue: entry.venue,
+						doi: entry.doi,
+						arxiv_id: entry.arxiv_id,
+						citations: entry.citations,
+						bibtex: entry.bibtex,
+					}));
+
+					return {
+						content: [{
+							type: "text" as const,
+							text: yamlStringify({ results: formattedResults })
+						}]
+					};
+				} catch (error) {
+					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+				}
+			},
+		);
+	}
+
 	// Extract PDF tool - extract figures, tables, and equations from PDF documents
 	if (isToolEnabled("extract_pdf")) {
 		server.tool(

@@ -9,7 +9,7 @@ const SERVER_NAME = "jina-mcp";
 
 // Tool tags mapping for filtering
 const TOOL_TAGS: Record<string, string[]> = {
-	search: ["search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog"],
+	search: ["search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog", "search_bibtex"],
 	parallel: ["parallel_search_web", "parallel_search_arxiv", "parallel_search_ssrn", "parallel_read_url"],
 	read: ["read_url", "parallel_read_url", "capture_screenshot_url"],
 	utility: ["primer", "show_api_key", "expand_query", "guess_datetime_url", "extract_pdf"],
@@ -19,7 +19,7 @@ const TOOL_TAGS: Record<string, string[]> = {
 // All available tools
 const ALL_TOOLS = [
 	"primer", "show_api_key", "read_url", "capture_screenshot_url", "guess_datetime_url",
-	"search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog", "expand_query",
+	"search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog", "search_bibtex", "expand_query",
 	"parallel_search_web", "parallel_search_arxiv", "parallel_search_ssrn", "parallel_read_url",
 	"sort_by_relevance", "deduplicate_strings", "deduplicate_images", "extract_pdf"
 ];
@@ -109,6 +109,11 @@ Academic Paper Search (use for scholarly/research queries):
 - "search arXiv for...", "find papers on arXiv about..."
 - "search SSRN for...", "find economics/finance/law papers..."
 - "find academic papers about...", "what research exists on..."
+
+BibTeX Citations (use when user needs citation/bibliography entries):
+- "get bibtex for...", "find citation for this paper..."
+- "search for bibtex entries...", "get bibliography entry for..."
+- Any request for LaTeX citations or academic references in BibTeX format
 
 Image Search (use when user wants to find images online):
 - "search for images of...", "find pictures of...", "find photos of..."
@@ -310,6 +315,7 @@ export default {
 					"search_ssrn - Search academic papers on SSRN (Social Science Research Network)",
 					"search_images - Search for images across the web (similar to Google Images)",
 					"search_jina_blog - Search Jina AI news at jina.ai/news for articles, tutorials, and announcements",
+					"search_bibtex - Search for academic papers and return BibTeX citations (DBLP + Semantic Scholar)",
 					"expand_query - Expand and rewrite search queries based on the query expansion model",
 					"parallel_read_url - Read multiple web pages in parallel for content extraction",
 					"parallel_search_web - Run multiple web searches in parallel for topic coverage and diverse perspectives",
