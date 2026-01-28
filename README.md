@@ -59,10 +59,10 @@ For client that does not support remote MCP server yet, you need [`mcp-remote`](
       "command": "npx",
       "args": [
         "mcp-remote",
-        "https://mcp.jina.ai/v1"
+        "https://mcp.jina.ai/v1",
         "--header",
         "Authorization: Bearer ${JINA_API_KEY}"
-        ]
+      ]
     }
   }
 }

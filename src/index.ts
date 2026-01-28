@@ -86,8 +86,6 @@ function parseToolFilter(url: URL): Set<string> | null {
 	return enabledTools;
 }
 
-// Props storage for the current request (used by tools)
-let currentProps: Record<string, unknown> = {};
 
 // Server instructions for MCP tool discovery (SEO for LLM tool search)
 // Key principle: be specific to win relevant queries, avoid generic terms that cause false positives
@@ -131,8 +129,10 @@ PDF Extraction:
 
 NOT FOR: local file operations, code execution, database queries, non-web APIs.`;
 
-// Create the MCP server instance
-function createServer(enabledTools: Set<string> | null) {
+// Create the MCP server instance with request-scoped props
+// Note: We create a fresh server per request to avoid race conditions with concurrent requests
+// The props are captured in the closure at creation time, ensuring each request has its own context
+function createServer(enabledTools: Set<string> | null, props: Record<string, unknown>) {
 	const server = new McpServer(
 		{
 			name: "Jina AI Official MCP Server",
@@ -143,23 +143,10 @@ function createServer(enabledTools: Set<string> | null) {
 		}
 	);
 
-	// Register all Jina AI tools with optional filtering
-	registerJinaTools(server, () => currentProps, enabledTools);
+	// Register all Jina AI tools with props captured in closure (request-scoped)
+	registerJinaTools(server, () => props, enabledTools);
 
 	return server;
-}
-
-// Cache servers by their enabled tools configuration
-const serverCache = new Map<string, McpServer>();
-
-function getOrCreateServer(enabledTools: Set<string> | null): McpServer {
-	const cacheKey = enabledTools ? Array.from(enabledTools).sort().join(",") : "all";
-
-	if (!serverCache.has(cacheKey)) {
-		serverCache.set(cacheKey, createServer(enabledTools));
-	}
-
-	return serverCache.get(cacheKey)!;
 }
 
 export default {
@@ -241,11 +228,8 @@ export default {
 		// Add context to props
 		props.context = context;
 
-		// Set current props for tools to access
-		currentProps = props;
-
-		// Get or create server with the appropriate tool filter
-		const server = getOrCreateServer(enabledTools);
+		// Create server with request-scoped props (fresh per request to avoid race conditions)
+		const server = createServer(enabledTools, props);
 
 		// Handle MCP endpoints using createMcpHandler (stateless, no Durable Objects)
 		// /v1 is the primary endpoint, /sse is kept for backward compatibility
