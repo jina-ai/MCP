@@ -318,26 +318,19 @@ export async function executeParallelSearches<T>(
         try {
             return await searchFunction(searchArgs);
         } catch (error) {
-            return { error: `Search failed: ${error instanceof Error ? error.message : String(error)}` };
+            return { error: `Search failed: ${error instanceof Error ? error.message : String(error)}` } as SearchError;
         }
     });
 
-    // Wait for all searches with timeout
-    const results = await Promise.allSettled(searchPromises);
-    const timeoutPromise = new Promise(resolve => setTimeout(() => resolve('timeout'), timeout));
+    // Race all searches against timeout
+    const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Parallel search timed out after ${timeout}ms`)), timeout)
+    );
 
-    const completedResults = await Promise.race([
-        Promise.all(results.map(result =>
-            result.status === 'fulfilled' ? result.value : { error: 'Promise rejected' }
-        )),
+    return Promise.race([
+        Promise.all(searchPromises),
         timeoutPromise
     ]);
-
-    if (completedResults === 'timeout') {
-        throw new Error(`Parallel search timed out after ${timeout}ms`);
-    }
-
-    return completedResults as ParallelSearchResult[];
 }
 
 // ============================================================================

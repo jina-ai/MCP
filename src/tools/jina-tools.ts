@@ -803,6 +803,11 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 								type: "text" as const,
 								text: yamlStringify(result.structuredData),
 							});
+						} else if ('error' in result) {
+							contentItems.push({
+								type: "text" as const,
+								text: `Error reading ${result.url}: ${result.error}`,
+							});
 						}
 					}
 
@@ -938,18 +943,12 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 
 					// Use submodular optimization to select diverse strings
 					let selectedIndices: number[];
-					let optimalK: number;
-					let values: number[];
 
 					if (k !== undefined) {
-						// Use specified k
 						selectedIndices = lazyGreedySelection(embeddings, k);
-						values = [];
 					} else {
-						// Automatically find optimal k using saturation point
 						const result = lazyGreedySelectionWithSaturation(embeddings);
 						selectedIndices = result.selected;
-						values = result.values;
 					}
 
 					// Get the selected strings
@@ -1036,15 +1035,12 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 
 					// Use submodular optimization to select diverse images
 					let selectedIndices: number[];
-					let values: number[];
 
 					if (k !== undefined) {
 						selectedIndices = lazyGreedySelection(embeddings, k);
-						values = [];
 					} else {
 						const result = lazyGreedySelectionWithSaturation(embeddings);
 						selectedIndices = result.selected;
-						values = result.values;
 					}
 
 					// Get the selected images
