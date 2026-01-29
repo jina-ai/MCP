@@ -5,6 +5,7 @@ declare namespace Cloudflare {
     interface Env {
         JINA_API_KEY?: string;
         VITE_GHOST_API_KEY?: string;
+        API_BASE_URL?: string;
     }
 }
 interface Env extends Cloudflare.Env { }

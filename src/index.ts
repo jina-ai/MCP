@@ -174,6 +174,9 @@ export default {
 		// Add Ghost API key for Jina blog search
 		props.ghostApiKey = env.VITE_GHOST_API_KEY;
 
+		// API base URL for embedding/reranker endpoints (bypasses Cloudflare proxy issues)
+		props.apiBaseUrl = env.API_BASE_URL || 'https://api.jina.ai';
+
 		// Extract context information for the primer tool
 		const context: any = {};
 

@@ -213,7 +213,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 								type: "text" as const,
 								text: yamlStringify(result.structuredData),
 							}],
-						}, props.bearerToken, getClientName());
+						}, props.bearerToken, getClientName(), props.apiBaseUrl);
 					}
 
 					// Handle multiple URLs with parallel reading
@@ -249,7 +249,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 
 						return applyTokenGuardrail({
 							content: contentItems,
-						}, props.bearerToken, getClientName());
+						}, props.bearerToken, getClientName(), props.apiBaseUrl);
 					}
 
 					return createErrorResponse("Invalid URL format");
@@ -813,7 +813,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 
 					return applyTokenGuardrail({
 						content: contentItems,
-					}, props.bearerToken, getClientName());
+					}, props.bearerToken, getClientName(), props.apiBaseUrl);
 				} catch (error) {
 					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
 				}
@@ -844,7 +844,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						throw new Error("No documents provided for reranking");
 					}
 
-					const response = await fetch('https://api.jina.ai/v1/rerank', {
+					const response = await fetch(`${props.apiBaseUrl}/v1/rerank`, {
 						method: 'POST',
 						headers: {
 							'Accept': 'application/json',
@@ -914,7 +914,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					}
 
 					// Get embeddings from Jina API
-					const response = await fetch('https://api.jina.ai/v1/embeddings', {
+					const response = await fetch(`${props.apiBaseUrl}/v1/embeddings`, {
 						method: 'POST',
 						headers: {
 							'Accept': 'application/json',
@@ -1007,7 +1007,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					const embeddingInput = images.map((img) => ({ image: img }));
 
 					// Get image embeddings from Jina API using CLIP v2
-					const response = await fetch('https://api.jina.ai/v1/embeddings', {
+					const response = await fetch(`${props.apiBaseUrl}/v1/embeddings`, {
 						method: 'POST',
 						headers: {
 							'Accept': 'application/json',

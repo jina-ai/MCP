@@ -23,9 +23,9 @@ interface TokenCountResult {
 /**
  * Count tokens using Jina Segment API
  */
-async function countTokens(content: string, bearerToken: string): Promise<number> {
+async function countTokens(content: string, bearerToken: string, apiBaseUrl: string = 'https://api.jina.ai'): Promise<number> {
     try {
-        const response = await fetch('https://api.jina.ai/v1/segment', {
+        const response = await fetch(`${apiBaseUrl}/v1/segment`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -55,7 +55,8 @@ async function countTokens(content: string, bearerToken: string): Promise<number
 async function truncateContentItems(
     contentItems: ContentItem[],
     bearerToken: string,
-    maxTokens: number = MAX_TOKENS
+    maxTokens: number = MAX_TOKENS,
+    apiBaseUrl: string = 'https://api.jina.ai'
 ): Promise<ContentItem[]> {
     const textItems = contentItems.filter((item): item is TextContentItem => item.type === 'text');
     const nonTextItems = contentItems.filter((item): item is ImageContentItem => item.type !== 'text');
@@ -67,7 +68,7 @@ async function truncateContentItems(
     // Single item case: truncate the text if too large
     if (textItems.length === 1) {
         const item = textItems[0];
-        const tokens = await countTokens(item.text, bearerToken);
+        const tokens = await countTokens(item.text, bearerToken, apiBaseUrl);
 
         if (tokens <= maxTokens) {
             return contentItems;
@@ -91,7 +92,7 @@ async function truncateContentItems(
     let totalTokens = 0;
 
     for (const item of textItems) {
-        const itemTokens = await countTokens(item.text, bearerToken);
+        const itemTokens = await countTokens(item.text, bearerToken, apiBaseUrl);
 
         if (totalTokens + itemTokens > maxTokens) {
             // Adding this item would exceed limit, stop here
@@ -120,7 +121,8 @@ export function shouldApplyGuardrail(clientName: string | undefined): boolean {
 export async function applyTokenGuardrail(
     response: { content: ContentItem[]; isError?: boolean },
     bearerToken: string,
-    clientName?: string
+    clientName?: string,
+    apiBaseUrl: string = 'https://api.jina.ai'
 ): Promise<{ content: ContentItem[]; isError?: boolean }> {
     // Skip guardrail if not a known limited client
     if (!shouldApplyGuardrail(clientName)) {
@@ -134,7 +136,8 @@ export async function applyTokenGuardrail(
     const truncatedContent = await truncateContentItems(
         response.content,
         bearerToken,
-        MAX_TOKENS
+        MAX_TOKENS,
+        apiBaseUrl
     );
 
     return {
