@@ -852,7 +852,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 							'Authorization': `Bearer ${props.bearerToken}`,
 						},
 						body: JSON.stringify({
-							model: 'jina-reranker-v2-base-multilingual',
+							model: 'jina-reranker-v3',
 							query,
 							top_n: top_n || documents.length,
 							documents
@@ -922,7 +922,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 							'Authorization': `Bearer ${props.bearerToken}`,
 						},
 						body: JSON.stringify({
-							model: 'jina-embeddings-v3',
+							model: 'jina-embeddings-v5-text-small',
 							task: 'text-matching',
 							input: strings
 						}),
