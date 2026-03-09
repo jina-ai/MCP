@@ -285,3 +285,13 @@ npm run start
 [![Deploy to Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/jina-ai/MCP)
 
 This will deploy your MCP server to a URL like: `jina-mcp-server.<your-account>.workers.dev/v1`
+
+### MCP Registry
+
+This server is ready for publishing to the [MCP Registry](https://registry.modelcontextprotocol.io). A `server.json` file is included with the required metadata for both Streamable HTTP and SSE transports. To publish:
+
+1. Install the `mcp-publisher` CLI tool
+2. Authenticate: `mcp-publisher login github`
+3. Publish: `mcp-publisher publish`
+
+For full instructions, see the [MCP Registry Quickstart](https://modelcontextprotocol.io/docs/registry/publishing/quickstart).
