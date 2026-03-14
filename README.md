@@ -24,6 +24,7 @@ A remote Model Context Protocol (MCP) server that provides access to Jina Reader
 | `parallel_search_arxiv` | Run multiple arXiv searches in parallel for comprehensive research coverage and diverse academic angles via [Reader API](https://jina.ai/reader) | Yes |
 | `parallel_search_ssrn` | Run multiple SSRN searches in parallel for comprehensive social science research coverage via [Reader API](https://jina.ai/reader) | Yes |
 | `sort_by_relevance` | Rerank documents by relevance to a query via [Reranker API](https://jina.ai/reranker) | Yes |
+| `classify_text` | Classify texts into user-defined labels via [Embeddings API](https://jina.ai/embeddings) | Yes |
 | `deduplicate_strings` | Get top-k semantically unique strings via [Embeddings API](https://jina.ai/embeddings) and [submodular optimization](https://jina.ai/news/submodular-optimization-for-diverse-query-generation-in-deepresearch) | Yes |
 | `deduplicate_images` | Get top-k semantically unique images via [Embeddings API](https://jina.ai/embeddings) and [submodular optimization](https://jina.ai/news/submodular-optimization-for-diverse-query-generation-in-deepresearch) | Yes |
 | `extract_pdf` | Extract figures, tables, and equations from PDF documents (arXiv papers or any PDF URL) using layout detection | Yes |
