@@ -821,6 +821,74 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 		);
 	}
 
+	// Classify text tool - classify texts into labels using Jina classify API
+	if (isToolEnabled("classify_text")) {
+		server.tool(
+			"classify_text",
+			"Classify texts into user-defined labels using Jina embeddings. Use this when you need to categorize, tag, or sort text content into predefined categories. Perfect for sentiment analysis, topic classification, content moderation, or any text categorization task.",
+			{
+				texts: z.array(z.string()).describe("Array of text strings to classify (e.g., ['I love this product', 'terrible experience'])"),
+				labels: z.array(z.string()).describe("Array of classification labels (e.g., ['positive', 'negative', 'neutral'])"),
+				model: z.string().default("jina-embeddings-v5-text-small").describe("Model to use for classification (default: jina-embeddings-v5-text-small)")
+			},
+			async ({ texts, labels, model }: { texts: string[]; labels: string[]; model: string }) => {
+				try {
+					const props = getProps();
+
+					const tokenError = checkBearerToken(props.bearerToken);
+					if (tokenError) {
+						return tokenError;
+					}
+
+					if (texts.length === 0) {
+						throw new Error("No texts provided for classification");
+					}
+
+					if (labels.length < 2) {
+						throw new Error("At least two labels are required for classification");
+					}
+
+					const response = await fetch(`${props.apiBaseUrl}/v1/classify`, {
+						method: 'POST',
+						headers: {
+							'Accept': 'application/json',
+							'Content-Type': 'application/json',
+							'Authorization': `Bearer ${props.bearerToken}`,
+						},
+						body: JSON.stringify({
+							model,
+							input: texts,
+							labels,
+						}),
+					});
+
+					if (!response.ok) {
+						return handleApiError(response, "Text classification");
+					}
+
+					const data = await response.json() as any;
+
+					const contentItems: Array<{ type: 'text'; text: string }> = [];
+
+					if (data.data && Array.isArray(data.data)) {
+						for (const result of data.data) {
+							contentItems.push({
+								type: "text" as const,
+								text: yamlStringify(result),
+							});
+						}
+					}
+
+					return {
+						content: contentItems,
+					};
+				} catch (error) {
+					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+				}
+			},
+		);
+	}
+
 	// Sort by relevance tool - rerank documents using Jina reranker API
 	if (isToolEnabled("sort_by_relevance")) {
 		server.tool(

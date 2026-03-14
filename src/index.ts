@@ -13,7 +13,7 @@ const TOOL_TAGS: Record<string, string[]> = {
 	parallel: ["parallel_search_web", "parallel_search_arxiv", "parallel_search_ssrn", "parallel_read_url"],
 	read: ["read_url", "parallel_read_url", "capture_screenshot_url"],
 	utility: ["primer", "show_api_key", "expand_query", "guess_datetime_url", "extract_pdf"],
-	rerank: ["sort_by_relevance", "deduplicate_strings", "deduplicate_images"],
+	rerank: ["sort_by_relevance", "classify_text", "deduplicate_strings", "deduplicate_images"],
 };
 
 // All available tools
@@ -21,7 +21,7 @@ const ALL_TOOLS = [
 	"primer", "show_api_key", "read_url", "capture_screenshot_url", "guess_datetime_url",
 	"search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog", "search_bibtex", "expand_query",
 	"parallel_search_web", "parallel_search_arxiv", "parallel_search_ssrn", "parallel_read_url",
-	"sort_by_relevance", "deduplicate_strings", "deduplicate_images", "extract_pdf"
+	"sort_by_relevance", "classify_text", "deduplicate_strings", "deduplicate_images", "extract_pdf"
 ];
 
 // Parse tool filter from query parameters
@@ -119,6 +119,10 @@ Image Search (use when user wants to find images online):
 Screenshot Capture (use when user wants to SEE a webpage):
 - "take a screenshot of this URL...", "capture this webpage visually..."
 - "show me what this website looks like..."
+
+Text Classification:
+- "classify this text as...", "categorize these texts into...", "is this text positive or negative..."
+- "label these documents...", "sentiment analysis of..."
 
 Semantic Reranking/Deduplication:
 - "rerank these results by relevance to...", "sort by semantic similarity..."
@@ -309,6 +313,7 @@ export default {
 					"parallel_search_arxiv - Run multiple arXiv searches in parallel for research coverage and diverse academic angles",
 					"parallel_search_ssrn - Run multiple SSRN searches in parallel for social science research coverage",
 					"sort_by_relevance - Rerank documents by relevance to a query",
+					"classify_text - Classify texts into user-defined labels",
 					"deduplicate_strings - Get top-k semantically unique strings",
 					"deduplicate_images - Get top-k semantically unique images",
 					"extract_pdf - Extract figures, tables, and equations from PDF documents"
