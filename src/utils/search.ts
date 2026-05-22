@@ -227,7 +227,7 @@ export async function executeJinaBlogSearch(
             params.set('filter', filters.join('+'));
         }
 
-        const response = await fetch(`https://jina-ai-gmbh.ghost.io/ghost/api/content/posts/?${params.toString()}`, {
+        const response = await fetch(`https://cms.jina.ai/ghost/api/content/posts/?${params.toString()}`, {
             method: 'GET',
             headers: {
                 'Accept': 'application/json',
@@ -242,9 +242,11 @@ export async function executeJinaBlogSearch(
 
         // Transform Ghost posts to search result format
         const results = (data.posts || []).map((post: any) => {
-            // Transform ghost.io URL to jina.ai/news URL
+            // Transform Ghost CMS URL to jina.ai/news URL
             let url = post.url || `https://jina.ai/news/${post.slug}`;
-            if (url.includes('jina-ai-gmbh.ghost.io')) {
+            if (url.includes('cms.jina.ai')) {
+                url = url.replace('https://cms.jina.ai/', 'https://jina.ai/news/');
+            } else if (url.includes('jina-ai-gmbh.ghost.io')) {
                 url = url.replace('https://jina-ai-gmbh.ghost.io/podcast/', 'https://jina.ai/news/');
                 url = url.replace('https://jina-ai-gmbh.ghost.io/', 'https://jina.ai/news/');
             }
