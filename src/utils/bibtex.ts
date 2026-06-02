@@ -159,8 +159,9 @@ export async function searchDblp(args: BibtexSearchArgs): Promise<BibtexEntry[]>
 
 		return results;
 	} catch (error) {
-		// Timeout or network error
-		return [];
+		// Surface the failure instead of swallowing to [] (so a network/API error is not mistaken
+		// for "no matches"); searchBibtex decides whether it is fatal.
+		throw new Error(`DBLP: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
@@ -233,8 +234,7 @@ export async function searchSemanticScholar(args: BibtexSearchArgs): Promise<Bib
 
 		return results;
 	} catch (error) {
-		// Timeout or network error
-		return [];
+		throw new Error(`Semantic Scholar: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
@@ -345,16 +345,28 @@ function mergeEntries(target: BibtexEntry, source: BibtexEntry): void {
 export async function searchBibtex(args: BibtexSearchArgs): Promise<BibtexEntry[]> {
 	const { num = 10 } = args;
 
-	// Search both providers in parallel
-	const [dblpResults, s2Results] = await Promise.all([
+	// Search both providers in parallel. allSettled (not all) so one provider failing does not
+	// discard the other's results.
+	const settled = await Promise.allSettled([
 		searchDblp(args),
 		searchSemanticScholar(args),
 	]);
 
-	// Combine and deduplicate
-	const combined = [...dblpResults, ...s2Results];
-	const deduplicated = deduplicateResults(combined);
+	const combined: BibtexEntry[] = [];
+	const errors: string[] = [];
+	for (const r of settled) {
+		if (r.status === "fulfilled") combined.push(...r.value);
+		else errors.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
+	}
 
-	// Return requested number
-	return deduplicated.slice(0, num);
+	const deduplicated = deduplicateResults(combined);
+	const results = deduplicated.slice(0, num);
+
+	// A lookup that errored must not masquerade as "no matches": if every source we tried failed
+	// and we got nothing, surface the failure instead of returning an empty list.
+	if (results.length === 0 && errors.length > 0) {
+		throw new Error(`bibtex lookup failed (${errors.join("; ")})`);
+	}
+
+	return results;
 }
