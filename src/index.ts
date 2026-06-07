@@ -4,7 +4,7 @@ import { registerJinaTools } from "./tools/jina-tools.js";
 import { stringify as yamlStringify } from "yaml";
 
 // Build-time constants (can be replaced by build tools)
-const SERVER_VERSION = "1.4.0"; // Bumped version for stateless rewrite
+const SERVER_VERSION = "1.5.0"; // Add embeddings, segmenter, tokenizer tools
 const SERVER_NAME = "jina-mcp";
 
 // Tool tags mapping for filtering
@@ -14,6 +14,7 @@ const TOOL_TAGS: Record<string, string[]> = {
 	read: ["read_url", "parallel_read_url", "capture_screenshot_url"],
 	utility: ["primer", "show_api_key", "expand_query", "guess_datetime_url", "extract_pdf"],
 	rerank: ["sort_by_relevance", "classify_text", "deduplicate_strings", "deduplicate_images"],
+	embedding: ["generate_embeddings", "segment_text", "count_tokens"],
 };
 
 // All available tools
@@ -21,7 +22,8 @@ const ALL_TOOLS = [
 	"primer", "show_api_key", "read_url", "capture_screenshot_url", "guess_datetime_url",
 	"search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog", "search_bibtex", "expand_query",
 	"parallel_search_web", "parallel_search_arxiv", "parallel_search_ssrn", "parallel_read_url",
-	"sort_by_relevance", "classify_text", "deduplicate_strings", "deduplicate_images", "extract_pdf"
+	"sort_by_relevance", "classify_text", "deduplicate_strings", "deduplicate_images", "extract_pdf",
+	"generate_embeddings", "segment_text", "count_tokens"
 ];
 
 // Parse tool filter from query parameters
@@ -130,6 +132,16 @@ Semantic Reranking/Deduplication:
 
 PDF Extraction:
 - "extract figures from this PDF...", "get tables from PDF...", "extract equations from PDF..."
+
+Text Embeddings (use when user wants vector representations):
+- "generate embeddings for...", "embed this text...", "get vectors for..."
+- "compute similarity...", "create embedding vectors..."
+- Any task requiring semantic vector representations for search or RAG
+
+Text Segmentation/Tokenization (use when user needs to split or count text):
+- "chunk this text...", "segment this document...", "split into passages..."
+- "how many tokens in...", "count tokens...", "token count for..."
+- Any task involving text splitting for RAG pipelines or token budgeting
 
 NOT FOR: local file operations, code execution, database queries, non-web APIs.`;
 
@@ -316,7 +328,10 @@ export default {
 					"classify_text - Classify texts into user-defined labels",
 					"deduplicate_strings - Get top-k semantically unique strings",
 					"deduplicate_images - Get top-k semantically unique images",
-					"extract_pdf - Extract figures, tables, and equations from PDF documents"
+					"extract_pdf - Extract figures, tables, and equations from PDF documents",
+					"generate_embeddings - Generate vector embeddings for text using Jina embedding models",
+					"segment_text - Split text into semantic chunks with token counts for RAG pipelines",
+					"count_tokens - Count tokens in text for budget estimation and context window management"
 				]
 			};
 
