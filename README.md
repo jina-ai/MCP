@@ -3,6 +3,7 @@
 [CLI version](https://github.com/jina-ai/cli)
 [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=jina-mcp-server&config=eyJ1cmwiOiJodHRwczovL21jcC5qaW5hLmFpL3NzZSIsImhlYWRlcnMiOnsiQXV0aG9yaXphdGlvbiI6IkJlYXJlciBqaW5hXzhjMGM3YjUyNDI0ZjQxNmFiMDUzYTMxYzk2Mjc3NmI2VDBwNVR4eG52SUpXdFlvemhlRnZYVi16eUpoXyJ9fQ%3D%3D)
 [![Add MCP Server jina-mcp-server to LM Studio](https://files.lmstudio.ai/deeplink/mcp-install-light.svg)](https://lmstudio.ai/install-mcp?name=jina-mcp-server&config=eyJ1cmwiOiJodHRwczovL21jcC5qaW5hLmFpL3NzZSIsImhlYWRlcnMiOnsiQXV0aG9yaXphdGlvbiI6IkJlYXJlciBqaW5hXzI5NGQ5NmRiODFiYTQ1ZjY5MDFiOGM2OTRmM2I3NDU4ZVJMaV9MRS1xOGNqejRCeUE3REJ2cGZPUm5fdSJ9fQ%3D%3D)
+[![MCP status](https://mcpvitals.com/badge/186e8b59c9.svg)](https://mcpvitals.com/status/186e8b59c9)
 
 A remote Model Context Protocol (MCP) server that provides access to Jina Reader, Embeddings and Reranker APIs with a suite of URL-to-markdown, web search, image search, and embeddings/reranker tools:
 
