@@ -1345,4 +1345,278 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			},
 		);
 	}
+
+	// Generate embeddings tool - create vector embeddings using Jina Embedding API
+	if (isToolEnabled("generate_embeddings")) {
+		server.tool(
+			"generate_embeddings",
+			"Generate vector embeddings for text inputs using Jina embedding models. Use this when you need to create semantic vector representations for search, similarity matching, clustering, or classification tasks. Returns embedding vectors that can be used with vector databases for RAG pipelines.",
+			{
+				input: z.array(z.string()).min(1).max(100).describe("Array of text strings to embed (1-100 items)"),
+				model: z.string().default("jina-embeddings-v5-text-small").describe("Embedding model to use (e.g., 'jina-embeddings-v5-text-small', 'jina-embeddings-v5-text-nano', 'jina-embeddings-v3', 'jina-clip-v2')"),
+				task: z.enum(["retrieval.query", "retrieval.passage", "text-matching", "classification", "clustering"]).optional().describe("Task type for optimized embeddings: 'retrieval.query' for search queries, 'retrieval.passage' for documents, 'text-matching' for similarity, 'classification', or 'clustering'"),
+				dimensions: z.number().min(1).max(2048).optional().describe("Number of output dimensions (uses Matryoshka representation learning). Range depends on model: 1-1024 for v5, 1-2048 for v4"),
+				normalized: z.boolean().default(true).describe("If true (default), embeddings are L2-normalized to unit length")
+			},
+			async ({ input, model, task, dimensions, normalized }: { input: string[]; model: string; task?: string; dimensions?: number; normalized: boolean }) => {
+				try {
+					const props = getProps();
+
+					const tokenError = checkBearerToken(props.bearerToken);
+					if (tokenError) {
+						return tokenError;
+					}
+
+					if (input.length === 0) {
+						throw new Error("No text inputs provided for embedding");
+					}
+
+					const requestBody: Record<string, any> = {
+						model,
+						input,
+						normalized,
+					};
+
+					if (task) {
+						requestBody.task = task;
+					}
+
+					if (dimensions) {
+						requestBody.dimensions = dimensions;
+					}
+
+					const response = await fetch(`${props.apiBaseUrl}/v1/embeddings`, {
+						method: 'POST',
+						headers: {
+							'Accept': 'application/json',
+							'Content-Type': 'application/json',
+							'Authorization': `Bearer ${props.bearerToken}`,
+						},
+						body: JSON.stringify(requestBody),
+					});
+
+					if (!response.ok) {
+						return handleApiError(response, "Embedding generation");
+					}
+
+					const data = await response.json() as any;
+
+					const contentItems: Array<{ type: 'text'; text: string }> = [];
+
+					// Add usage summary
+					const summary: Record<string, any> = {
+						model: data.model,
+						num_embeddings: data.data?.length || 0,
+					};
+
+					if (data.usage) {
+						summary.usage = data.usage;
+					}
+
+					if (data.data && data.data.length > 0 && data.data[0].embedding) {
+						summary.embedding_dimensions = Array.isArray(data.data[0].embedding)
+							? data.data[0].embedding.length
+							: 'unknown';
+					}
+
+					contentItems.push({
+						type: "text" as const,
+						text: yamlStringify(summary),
+					});
+
+					// Add each embedding as individual content items
+					if (data.data && Array.isArray(data.data)) {
+						for (const item of data.data) {
+							contentItems.push({
+								type: "text" as const,
+								text: yamlStringify({
+									index: item.index,
+									embedding: item.embedding,
+								}),
+							});
+						}
+					}
+
+					return {
+						content: contentItems,
+					};
+				} catch (error) {
+					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+				}
+			},
+		);
+	}
+
+	// Segment text tool - chunk text into semantic segments using Jina Segmenter API
+	if (isToolEnabled("segment_text")) {
+		server.tool(
+			"segment_text",
+			"Split text into semantic chunks using Jina Segmenter. Essential for RAG pipelines, document processing, and preparing text for embedding. Returns chunks with token counts for each segment. The segmenter intelligently splits text at sentence and paragraph boundaries.",
+			{
+				content: z.string().min(1).describe("The text content to segment into chunks"),
+				max_chunk_length: z.number().min(1).optional().describe("Maximum chunk length in tokens. If not set, uses the model's default chunking strategy"),
+				return_tokens: z.boolean().default(false).describe("If true, return token arrays for each chunk (increases response size significantly)")
+			},
+			async ({ content, max_chunk_length, return_tokens }: { content: string; max_chunk_length?: number; return_tokens: boolean }) => {
+				try {
+					const props = getProps();
+
+					const tokenError = checkBearerToken(props.bearerToken);
+					if (tokenError) {
+						return tokenError;
+					}
+
+					const requestBody: Record<string, any> = {
+						content,
+						return_chunks: true,
+					};
+
+					if (max_chunk_length) {
+						requestBody.max_chunk_length = max_chunk_length;
+					}
+
+					if (return_tokens) {
+						requestBody.return_tokens = true;
+					}
+
+					const response = await fetch(`${props.apiBaseUrl}/v1/segment`, {
+						method: 'POST',
+						headers: {
+							'Accept': 'application/json',
+							'Content-Type': 'application/json',
+							'Authorization': `Bearer ${props.bearerToken}`,
+						},
+						body: JSON.stringify(requestBody),
+					});
+
+					if (!response.ok) {
+						return handleApiError(response, "Text segmentation");
+					}
+
+					const data = await response.json() as any;
+
+					const contentItems: Array<{ type: 'text'; text: string }> = [];
+
+					// Build result object
+					const result: Record<string, any> = {
+						num_tokens: data.num_tokens,
+					};
+
+					if (data.tokenizer) {
+						result.tokenizer = data.tokenizer;
+					}
+
+					if (data.chunks && Array.isArray(data.chunks)) {
+						result.num_chunks = data.chunks.length;
+						result.chunks = data.chunks;
+					}
+
+					if (data.chunk_token_counts && Array.isArray(data.chunk_token_counts)) {
+						result.chunk_token_counts = data.chunk_token_counts;
+					}
+
+					if (return_tokens && data.tokens) {
+						result.tokens = data.tokens;
+					}
+
+					contentItems.push({
+						type: "text" as const,
+						text: yamlStringify(result),
+					});
+
+					return {
+						content: contentItems,
+					};
+				} catch (error) {
+					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+				}
+			},
+		);
+	}
+
+	// Count tokens tool - count tokens in text using Jina Segmenter API
+	if (isToolEnabled("count_tokens")) {
+		server.tool(
+			"count_tokens",
+			"Count the number of tokens in text. Lightweight utility for estimating API costs, checking context window limits, or budgeting token usage across embedding and search operations. Uses the same tokenizer as Jina embedding models.",
+			{
+				content: z.union([z.string(), z.array(z.string())]).describe("Text string or array of strings to count tokens for"),
+				tokenizer: z.string().optional().describe("Tokenizer to use (e.g., 'cl100k_base'). If not specified, uses the default tokenizer")
+			},
+			async ({ content, tokenizer }: { content: string | string[]; tokenizer?: string }) => {
+				try {
+					const props = getProps();
+
+					const tokenError = checkBearerToken(props.bearerToken);
+					if (tokenError) {
+						return tokenError;
+					}
+
+					const texts = typeof content === 'string' ? [content] : content;
+
+					if (texts.length === 0) {
+						throw new Error("No text provided for token counting");
+					}
+
+					const contentItems: Array<{ type: 'text'; text: string }> = [];
+
+					// Count tokens for each text
+					const results = await Promise.all(
+						texts.map(async (text, index) => {
+							const requestBody: Record<string, any> = { content: text };
+
+							if (tokenizer) {
+								requestBody.tokenizer = tokenizer;
+							}
+
+							const response = await fetch(`${props.apiBaseUrl}/v1/segment`, {
+								method: 'POST',
+								headers: {
+									'Accept': 'application/json',
+									'Content-Type': 'application/json',
+									'Authorization': `Bearer ${props.bearerToken}`,
+								},
+								body: JSON.stringify(requestBody),
+							});
+
+							if (!response.ok) {
+								return { index, error: `Token counting failed: ${response.statusText}` };
+							}
+
+							const data = await response.json() as any;
+							return {
+								index,
+								num_tokens: data.num_tokens,
+								tokenizer: data.tokenizer,
+							};
+						})
+					);
+
+					// For single string input, return flat result
+					if (typeof content === 'string' && results.length === 1) {
+						contentItems.push({
+							type: "text" as const,
+							text: yamlStringify(results[0]),
+						});
+					} else {
+						// For array input, return all results with total
+						const totalTokens = results.reduce((sum, r) => sum + (r.num_tokens || 0), 0);
+						contentItems.push({
+							type: "text" as const,
+							text: yamlStringify({
+								total_tokens: totalTokens,
+								results,
+							}),
+						});
+					}
+
+					return {
+						content: contentItems,
+					};
+				} catch (error) {
+					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+				}
+			},
+		);
+	}
 }
