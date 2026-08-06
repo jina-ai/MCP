@@ -81,6 +81,8 @@ claude mcp add -s user --transport http jina https://mcp.jina.ai/v1 \
   --header "Authorization: Bearer ${JINA_API_KEY}"
 ```
 
+For [Gamut](https://www.gamut.so/mcp/search-ai/jina-ai): go to **Connections** > **Add Connection**, search for **Jina AI**, and click **+** to add it. Authentication is handled automatically.
+
 For OpenAI Codex: find `~/.codex/config.toml` and add the following:
 ```toml
 [mcp_servers.jina-mcp-server]
