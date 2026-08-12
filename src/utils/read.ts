@@ -1,4 +1,9 @@
 import { normalizeUrl } from "./url-normalizer.js";
+import { withDeadline } from "./timeout.js";
+
+// r.jina.ai had no client-side deadline: a hung read held the Worker invocation
+// open until the platform killed it, taking the sibling reads down with it.
+const READ_REQUEST_TIMEOUT_MS = 30000;
 
 // ============================================================================
 // TYPES AND INTERFACES
@@ -66,6 +71,7 @@ export async function readUrlFromConfig(
 
         const response = await fetch('https://r.jina.ai/', {
             method: 'POST',
+            signal: AbortSignal.timeout(READ_REQUEST_TIMEOUT_MS),
             headers,
             body: JSON.stringify({ url: normalizedUrl }),
         });
@@ -121,14 +127,16 @@ export async function executeParallelUrlReads(
     bearerToken?: string,
     timeout: number = 30000
 ): Promise<ReadUrlResponse[]> {
-    const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Parallel URL read timeout')), timeout)
+    // Per-URL deadline. The whole batch used to be raced against one rejecting
+    // timeout, so one slow page threw away every read that had already
+    // succeeded and the caller got a single generic error instead.
+    return Promise.all(
+        urlConfigs.map((urlConfig) =>
+            withDeadline<ReadUrlResponse>(
+                () => readUrlFromConfig(urlConfig, bearerToken),
+                timeout,
+                () => ({ error: `Read timed out after ${timeout}ms`, url: urlConfig.url })
+            )
+        )
     );
-
-    const readPromises = urlConfigs.map(urlConfig => readUrlFromConfig(urlConfig, bearerToken));
-
-    return Promise.race([
-        Promise.all(readPromises),
-        timeoutPromise
-    ]);
 }

@@ -170,6 +170,10 @@ export default {
 			props.bearerToken = authHeader.substring(7);
 		}
 
+		// Remember whether the credential came from the caller, so tools that echo
+		// it back can tell it apart from the deployment fallback applied below.
+		props.bearerTokenFromRequest = Boolean(props.bearerToken);
+
 		// if no bearer token add a debug one from env
 		if (!props.bearerToken && env.JINA_API_KEY) {
 			props.bearerToken = env.JINA_API_KEY;
@@ -180,6 +184,22 @@ export default {
 
 		// API base URL for embedding/reranker endpoints (bypasses Cloudflare proxy issues)
 		props.apiBaseUrl = env.API_BASE_URL || 'https://api.jina.ai';
+
+		// Client identity for the response-size guardrail. This server is stateless -
+		// createMcpHandler gets no `storage`, so WorkerTransport never replays the
+		// `initialize` params into the per-request server and
+		// server.getClientVersion() is undefined during `tools/call`. Pass the
+		// transport User-Agent as a fallback hint, and let any client state its own
+		// budget explicitly with ?max_tokens= (0 disables truncation).
+		props.clientHint = request.headers.get("User-Agent") || undefined;
+
+		const maxTokensParam = url.searchParams.get("max_tokens");
+		if (maxTokensParam !== null) {
+			const parsed = Number.parseInt(maxTokensParam, 10);
+			if (Number.isFinite(parsed) && parsed >= 0) {
+				props.maxResponseTokens = parsed;
+			}
+		}
 
 		// Extract context information for the primer tool
 		const context: any = {};
@@ -286,7 +306,8 @@ export default {
 						exclude_tools: "Comma-separated tool names to exclude (e.g., search_web,search_arxiv)",
 						include_tools: "Comma-separated tool names to include",
 						exclude_tags: "Comma-separated tags to exclude (e.g., parallel,search)",
-						include_tags: "Comma-separated tags to include"
+						include_tags: "Comma-separated tags to include",
+						max_tokens: "Cap the size of read_url/parallel_read_url responses in tokens (0 disables truncation)"
 					},
 					tags: TOOL_TAGS,
 					examples: [

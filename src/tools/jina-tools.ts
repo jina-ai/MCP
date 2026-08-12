@@ -22,9 +22,31 @@ import {
 } from "../utils/search.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+/**
+ * Guess the media type of a raw base64 image from its leading bytes.
+ *
+ * Caller-supplied base64 is passed through untouched, so labelling it
+ * "image/jpeg" (as this used to) mislabels every PNG/GIF/WebP the caller sends.
+ */
+function sniffBase64ImageMimeType(base64: string): string {
+	const head = base64.slice(0, 16);
+	if (head.startsWith('iVBORw0KGgo')) return 'image/png';
+	if (head.startsWith('R0lGOD')) return 'image/gif';
+	if (head.startsWith('UklGR')) return 'image/webp';
+	if (head.startsWith('PHN2Zy') || head.startsWith('PD94bW')) return 'image/svg+xml';
+	return 'image/jpeg';
+}
+
+const SCREENSHOT_TIMEOUT_MS = 60000;
+const SCREENSHOT_DOWNLOAD_TIMEOUT_MS = 20000;
+
 export function registerJinaTools(server: McpServer, getProps: () => any, enabledTools: Set<string> | null = null) {
 	// Helper to get client name for guardrail check
-	const getClientName = () => server.server.getClientVersion()?.name;
+	// getClientVersion() only has a value on the server instance that handled
+	// `initialize`; this deployment builds a fresh server per request, so it is
+	// undefined at tool-call time. props.clientHint (the transport User-Agent,
+	// set in index.ts) is the fallback that keeps the guardrail reachable.
+	const getClientName = () => server.server.getClientVersion()?.name ?? (getProps().clientHint as string | undefined);
 	// Helper function to create error responses
 	const createErrorResponse = (message: string) => ({
 		content: [{ type: "text" as const, text: message }],
@@ -41,12 +63,14 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			{},
 			async () => {
 				const props = getProps();
-				const token = props.bearerToken as string;
-				if (!token) {
+				// props.bearerToken is not necessarily the caller's own credential -
+				// index.ts falls back to the deployment's configured key. This tool
+				// exists to echo back what the caller sent, so gate on that.
+				if (!props.bearerTokenFromRequest) {
 					return createErrorResponse("No bearer token found in request");
 				}
 				return {
-					content: [{ type: "text" as const, text: token }],
+					content: [{ type: "text" as const, text: props.bearerToken as string }],
 				};
 			},
 		);
@@ -129,6 +153,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 
 					const response = await fetch('https://r.jina.ai/', {
 						method: 'POST',
+						signal: AbortSignal.timeout(SCREENSHOT_TIMEOUT_MS),
 						headers,
 						body: JSON.stringify({ url }),
 					});
@@ -139,8 +164,10 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 
 					const data = await response.json() as any;
 
-					// Get the screenshot URL from the response
-					const imageUrl = data.data.screenshotUrl || data.data.pageshotUrl;
+					// Get the screenshot URL from the response. An unexpected payload used
+					// to surface as "Cannot read properties of undefined" rather than
+					// anything a caller could act on.
+					const imageUrl = data?.data?.screenshotUrl || data?.data?.pageshotUrl;
 					if (!imageUrl) {
 						throw new Error("No screenshot URL received from API");
 					}
@@ -155,12 +182,18 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 							text: imageUrl,
 						});
 					} else {
-						// Download and process the image (resize to max 800px, convert to JPEG)
-						const processedResults = await downloadImages(imageUrl, 1, 10000);
+						// Download and process the image. A pageshot is a full-page capture
+						// (often 1280x20000); fitting that inside an 800x800 box left a
+						// ~51px-wide sliver in which nothing was legible. Constrain the
+						// width only and let the height follow.
+						const processedResults = await downloadImages(imageUrl, 1, SCREENSHOT_DOWNLOAD_TIMEOUT_MS, {
+							width: 1024,
+							height: firstScreenOnly === true ? 1024 : null,
+						});
 						const processedResult = processedResults[0];
 
-						if (!processedResult.success) {
-							throw new Error(`Failed to process screenshot: ${processedResult.error}`);
+						if (!processedResult?.success) {
+							throw new Error(`Failed to process screenshot: ${processedResult?.error ?? 'download timed out'}`);
 						}
 
 						contentItems.push({
@@ -186,7 +219,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"read_url",
 			"Extract and convert web page content to clean, readable markdown format. Perfect for reading articles, documentation, blog posts, or any web content. Use this when you need to analyze text content from websites, bypass paywalls, or get structured data.",
 			{
-				url: z.union([z.string().url(), z.array(z.string().url())]).describe("The complete URL of the webpage or PDF file to read and convert (e.g., 'https://example.com/article'). Can be a single URL string or an array of URLs for parallel reading."),
+				url: z.union([z.string().url(), z.array(z.string().url()).min(1).max(5)]).describe("The complete URL of the webpage or PDF file to read and convert (e.g., 'https://example.com/article'). Can be a single URL string or an array of up to 5 URLs for parallel reading."),
 				withAllLinks: z.boolean().optional().describe("Set to true to extract and return all hyperlinks found on the page as structured data"),
 				withAllImages: z.boolean().optional().describe("Set to true to extract and return all images found on the page as structured data")
 			},
@@ -213,7 +246,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 								type: "text" as const,
 								text: yamlStringify(result.structuredData),
 							}],
-						}, props.bearerToken, getClientName(), props.apiBaseUrl);
+						}, props.bearerToken, getClientName(), props.apiBaseUrl, props.maxResponseTokens);
 					}
 
 					// Handle multiple URLs with parallel reading
@@ -249,7 +282,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 
 						return applyTokenGuardrail({
 							content: contentItems,
-						}, props.bearerToken, getClientName(), props.apiBaseUrl);
+						}, props.bearerToken, getClientName(), props.apiBaseUrl, props.maxResponseTokens);
 					}
 
 					return createErrorResponse("Invalid URL format");
@@ -266,8 +299,8 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"search_web",
 			"Search the entire web for current information, news, articles, and websites. Use this when you need up-to-date information, want to find specific websites, research topics, or get the latest news. Ideal for answering questions about recent events, finding resources, or discovering relevant content.",
 			{
-				query: z.union([z.string(), z.array(z.string())]).describe("Search terms or keywords to find relevant web content (e.g., 'climate change news 2024', 'best pizza recipe'). Can be a single query string or an array of queries for parallel search."),
-				num: z.number().default(30).describe("Maximum number of search results to return, between 1-100"),
+				query: z.union([z.string(), z.array(z.string()).min(1).max(5)]).describe("Search terms or keywords to find relevant web content (e.g., 'climate change news 2024', 'best pizza recipe'). Can be a single query string or an array of up to 5 queries for parallel search."),
+				num: z.number().int().min(1).max(100).default(30).describe("Maximum number of search results to return, between 1-100"),
 				tbs: z.string().optional().describe("Time-based search parameter, e.g., 'qdr:h' for past hour, can be qdr:h, qdr:d, qdr:w, qdr:m, qdr:y"),
 				location: z.string().optional().describe("Location for search results, e.g., 'London', 'New York', 'Tokyo'"),
 				gl: z.string().optional().describe("Country code, e.g., 'dz' for Algeria"),
@@ -383,8 +416,8 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"search_arxiv",
 			"Search academic papers and preprints on arXiv repository. Perfect for finding research papers, scientific studies, technical papers, and academic literature. Use this when researching scientific topics, looking for papers by specific authors, or finding the latest research in fields like AI, physics, mathematics, computer science, etc.",
 			{
-				query: z.union([z.string(), z.array(z.string())]).describe("Academic search terms, author names, or research topics (e.g., 'transformer neural networks', 'Einstein relativity', 'machine learning optimization'). Can be a single query string or an array of queries for parallel search."),
-				num: z.number().default(30).describe("Maximum number of academic papers to return, between 1-100"),
+				query: z.union([z.string(), z.array(z.string()).min(1).max(5)]).describe("Academic search terms, author names, or research topics (e.g., 'transformer neural networks', 'Einstein relativity', 'machine learning optimization'). Can be a single query string or an array of up to 5 queries for parallel search."),
+				num: z.number().int().min(1).max(100).default(30).describe("Maximum number of academic papers to return, between 1-100"),
 				tbs: z.string().optional().describe("Time-based search parameter, e.g., 'qdr:h' for past hour, can be qdr:h, qdr:d, qdr:w, qdr:m, qdr:y")
 			},
 			async ({ query, num, tbs }: { query: string | string[]; num: number; tbs?: string }) => {
@@ -439,8 +472,8 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"search_ssrn",
 			"Search academic papers and preprints on SSRN (Social Science Research Network). Perfect for finding research papers in social sciences, economics, law, finance, accounting, management, and humanities. Use this when researching social science topics, looking for working papers, or finding the latest research in business and economics fields.",
 			{
-				query: z.union([z.string(), z.array(z.string())]).describe("Academic search terms, author names, or research topics (e.g., 'corporate governance', 'behavioral finance', 'contract law'). Can be a single query string or an array of queries for parallel search."),
-				num: z.number().default(30).describe("Maximum number of academic papers to return, between 1-100"),
+				query: z.union([z.string(), z.array(z.string()).min(1).max(5)]).describe("Academic search terms, author names, or research topics (e.g., 'corporate governance', 'behavioral finance', 'contract law'). Can be a single query string or an array of up to 5 queries for parallel search."),
+				num: z.number().int().min(1).max(100).default(30).describe("Maximum number of academic papers to return, between 1-100"),
 				tbs: z.string().optional().describe("Time-based search parameter, e.g., 'qdr:h' for past hour, can be qdr:h, qdr:d, qdr:w, qdr:m, qdr:y")
 			},
 			async ({ query, num, tbs }: { query: string | string[]; num: number; tbs?: string }) => {
@@ -495,8 +528,8 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"search_jina_blog",
 			"Search Jina AI news and blog posts at jina.ai/news for articles about AI, machine learning, neural search, embeddings, and Jina products. Use this to find official Jina documentation, tutorials, product announcements, and technical deep-dives.",
 			{
-				query: z.union([z.string(), z.array(z.string())]).describe("Search terms to find relevant Jina blog posts (e.g., 'embeddings', 'reranker', 'ColBERT'). Can be a single query string or an array of queries for parallel search."),
-				num: z.number().default(30).describe("Maximum number of blog posts to return, between 1-100"),
+				query: z.union([z.string(), z.array(z.string()).min(1).max(5)]).describe("Search terms to find relevant Jina blog posts (e.g., 'embeddings', 'reranker', 'ColBERT'). Can be a single query string or an array of up to 5 queries for parallel search."),
+				num: z.number().int().min(1).max(100).default(30).describe("Maximum number of blog posts to return, between 1-100"),
 				tbs: z.string().optional().describe("Time-based search parameter, e.g., 'qdr:h' for past hour, can be qdr:h, qdr:d, qdr:w, qdr:m, qdr:y")
 			},
 			async ({ query, num, tbs }: { query: string | string[]; num: number; tbs?: string }) => {
@@ -556,13 +589,14 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"Search for images across the web, similar to Google Images. Use this when you need to find photos, illustrations, diagrams, charts, logos, or any visual content. Perfect for finding images to illustrate concepts, locating specific pictures, or discovering visual resources. Images are returned by default as small base64-encoded JPEG images.",
 			{
 				query: z.string().describe("Image search terms describing what you want to find (e.g., 'sunset over mountains', 'vintage car illustration', 'data visualization chart')"),
+				num: z.number().int().min(1).max(30).default(10).describe("Maximum number of images to return (1-30, default: 10)"),
 				return_url: z.boolean().default(false).describe("Set to true to return image URLs, title, shapes, and other metadata. By default, images are downloaded as base64 and returned as rendered images."),
 				tbs: z.string().optional().describe("Time-based search parameter, e.g., 'qdr:h' for past hour, can be qdr:h, qdr:d, qdr:w, qdr:m, qdr:y"),
 				location: z.string().optional().describe("Location for search results, e.g., 'London', 'New York', 'Tokyo'"),
 				gl: z.string().optional().describe("Country code, e.g., 'dz' for Algeria"),
 				hl: z.string().optional().describe("Language code, e.g., 'zh-cn' for Simplified Chinese")
 			},
-			async ({ query, return_url, tbs, location, gl, hl }: SearchImageArgs) => {
+			async ({ query, num, return_url, tbs, location, gl, hl }: SearchImageArgs & { num: number }) => {
 				try {
 					const props = getProps();
 
@@ -577,7 +611,10 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						return createErrorResponse(searchResult.error);
 					}
 
-					const data = { results: searchResult.results };
+					// The result set was previously used whole: every image the upstream
+					// returned was downloaded and inlined as base64, so a single call could
+					// push megabytes of image data into the model's context.
+					const data = { results: (searchResult.results || []).slice(0, num) };
 
 					// Prepare response content - always return as list structure for consistency
 					const contentItems: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [];
@@ -612,6 +649,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						const downloadResults = await downloadImages(imageUrls, 3, 15000);
 
 						// Add successful downloads as images
+						const failures: string[] = [];
 						for (const result of downloadResults) {
 							if (result.success && result.data) {
 								contentItems.push({
@@ -619,10 +657,25 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 									data: result.data,
 									mimeType: result.mimeType,
 								});
+							} else {
+								failures.push(`${result.url}: ${result.error || 'unknown error'}`);
 							}
 						}
 
-
+						// Failures used to be dropped silently, so a query whose results were
+						// all SVG or all hotlink-protected returned an empty *successful*
+						// response - indistinguishable from "no images found".
+						if (contentItems.length === 0) {
+							return createErrorResponse(
+								`Found ${downloadResults.length} image(s) but none could be fetched:\n${failures.join('\n')}`
+							);
+						}
+						if (failures.length > 0) {
+							contentItems.push({
+								type: "text" as const,
+								text: `${failures.length} of ${downloadResults.length} image(s) could not be fetched:\n${failures.join('\n')}`,
+							});
+						}
 					}
 
 					return {
@@ -643,7 +696,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			{
 				searches: z.array(z.object({
 					query: z.string().describe("Search terms or keywords to find relevant web content"),
-					num: z.number().default(30).describe("Maximum number of search results to return, between 1-100"),
+					num: z.number().int().min(1).max(100).default(30).describe("Maximum number of search results to return, between 1-100"),
 					tbs: z.string().optional().describe("Time-based search parameter, e.g., 'qdr:h' for past hour"),
 					location: z.string().optional().describe("Location for search results, e.g., 'London', 'New York', 'Tokyo'"),
 					gl: z.string().optional().describe("Country code, e.g., 'dz' for Algeria"),
@@ -690,7 +743,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			{
 				searches: z.array(z.object({
 					query: z.string().describe("Academic search terms, author names, or research topics"),
-					num: z.number().default(30).describe("Maximum number of academic papers to return, between 1-100"),
+					num: z.number().int().min(1).max(100).default(30).describe("Maximum number of academic papers to return, between 1-100"),
 					tbs: z.string().optional().describe("Time-based search parameter, e.g., 'qdr:h' for past hour")
 				})).max(5).describe("Array of arXiv search configurations to execute in parallel (maximum 5 searches for optimal performance)"),
 				timeout: z.number().default(30000).describe("Timeout in milliseconds for all searches")
@@ -734,7 +787,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			{
 				searches: z.array(z.object({
 					query: z.string().describe("Academic search terms, author names, or research topics"),
-					num: z.number().default(30).describe("Maximum number of academic papers to return, between 1-100"),
+					num: z.number().int().min(1).max(100).default(30).describe("Maximum number of academic papers to return, between 1-100"),
 					tbs: z.string().optional().describe("Time-based search parameter, e.g., 'qdr:h' for past hour")
 				})).max(5).describe("Array of SSRN search configurations to execute in parallel (maximum 5 searches for optimal performance)"),
 				timeout: z.number().default(30000).describe("Timeout in milliseconds for all searches")
@@ -816,7 +869,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 
 					return applyTokenGuardrail({
 						content: contentItems,
-					}, props.bearerToken, getClientName(), props.apiBaseUrl);
+					}, props.bearerToken, getClientName(), props.apiBaseUrl, props.maxResponseTokens);
 				} catch (error) {
 					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
 				}
@@ -830,8 +883,8 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"classify_text",
 			"Classify texts into user-defined labels using Jina embeddings. Use this when you need to categorize, tag, or sort text content into predefined categories. Perfect for sentiment analysis, topic classification, content moderation, or any text categorization task.",
 			{
-				texts: z.array(z.string()).describe("Array of text strings to classify (e.g., ['I love this product', 'terrible experience'])"),
-				labels: z.array(z.string()).describe("Array of classification labels (e.g., ['positive', 'negative', 'neutral'])"),
+				texts: z.array(z.string()).min(1).max(1024).describe("Array of text strings to classify, up to 1024 (e.g., ['I love this product', 'terrible experience'])"),
+				labels: z.array(z.string()).min(2).max(256).describe("Array of classification labels (e.g., ['positive', 'negative', 'neutral'])"),
 				model: z.string().default("jina-embeddings-v5-text-small").describe("Model to use for classification (default: jina-embeddings-v5-text-small)")
 			},
 			async ({ texts, labels, model }: { texts: string[]; labels: string[]; model: string }) => {
@@ -899,8 +952,8 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"Rerank a list of documents by relevance to a query using Jina Reranker API. Use this when you have multiple documents and want to sort them by how well they match a specific query or topic. Perfect for document retrieval, content filtering, or finding the most relevant information from a collection.",
 			{
 				query: z.string().describe("The query or topic to rank documents against (e.g., 'machine learning algorithms', 'climate change solutions')"),
-				documents: z.array(z.string()).describe("Array of document texts to rerank by relevance"),
-				top_n: z.number().optional().describe("Maximum number of top results to return")
+				documents: z.array(z.string()).min(1).max(1024).describe("Array of document texts to rerank by relevance, up to 1024"),
+				top_n: z.number().int().min(1).optional().describe("Maximum number of top results to return")
 			},
 			async ({ query, documents, top_n }: { query: string; documents: string[]; top_n?: number }) => {
 				try {
@@ -964,8 +1017,8 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"deduplicate_strings",
 			"Get top-k semantically unique strings from a list using Jina embeddings and submodular optimization. Use this when you have many similar strings and want to select the most diverse subset that covers the semantic space. Perfect for removing duplicates, selecting representative samples, or finding diverse content.",
 			{
-				strings: z.array(z.string()).describe("Array of strings to deduplicate"),
-				k: z.number().optional().describe("Number of unique strings to return. If not provided, automatically finds optimal k by looking at diminishing return")
+				strings: z.array(z.string()).min(1).max(1000).describe("Array of strings to deduplicate, up to 1000"),
+				k: z.number().int().min(1).optional().describe("Number of unique strings to return. If not provided, automatically finds optimal k by looking at diminishing return")
 			},
 			async ({ strings, k }: { strings: string[]; k?: number }) => {
 				try {
@@ -1054,8 +1107,8 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"deduplicate_images",
 			"Get top-k semantically unique images (URLs or base64-encoded) using Jina CLIP v2 embeddings and submodular optimization. Use this when you have many visually similar images and want the most diverse subset.",
 			{
-				images: z.array(z.string()).describe("Array of image inputs to deduplicate. Each item can be either an HTTP(S) URL or a raw base64-encoded image string (without data URI prefix)."),
-				k: z.number().optional().describe("Number of unique images to return. If not provided, automatically finds optimal k by looking at diminishing return"),
+				images: z.array(z.string()).min(1).max(200).describe("Array of image inputs to deduplicate, up to 200. Each item can be either an HTTP(S) URL or a raw base64-encoded image string (without data URI prefix)."),
+				k: z.number().int().min(1).optional().describe("Number of unique images to return. If not provided, automatically finds optimal k by looking at diminishing return"),
 			},
 			async ({ images, k }: { images: string[]; k?: number }) => {
 				try {
@@ -1117,48 +1170,47 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					// Get the selected images
 					const selectedImages = selectedIndices.map((idx) => ({ index: idx, source: images[idx] }));
 
+					const isUrl = (source: string) => /^https?:\/\//i.test(source);
 
 					// Use our consolidated downloadImages utility for consistency
-					const urlsToDownload = selectedImages
-						.filter(({ source }) => /^https?:\/\//i.test(source))
-						.map(({ source }) => source);
-
-					const base64Images = selectedImages
-						.filter(({ source }) => !/^https?:\/\//i.test(source))
-						.map(({ source }) => source);
+					const urlEntries = selectedImages.filter(({ source }) => isUrl(source));
+					const downloadResults = urlEntries.length > 0
+						? await downloadImages(urlEntries.map(({ source }) => source), 3, 15000)
+						: [];
 
 					const contentItems: Array<{ type: 'image'; data: string; mimeType: string } | { type: 'text'; text: string }> = [];
 
-					// Download URLs using our utility
-					if (urlsToDownload.length > 0) {
-						const downloadResults = await downloadImages(urlsToDownload, 3, 15000);
-
-						for (let i = 0; i < downloadResults.length; i++) {
-							const result = downloadResults[i];
-							const selectedImage = selectedImages.find(({ source }) => source === urlsToDownload[i]);
-
-							if (result.success && result.data) {
-								contentItems.push({
-									type: 'image' as const,
-									data: result.data,
-									mimeType: result.mimeType,
-								});
-							} else {
-								contentItems.push({
-									type: 'text' as const,
-									text: `Failed to download image at index ${selectedImage?.index || i}: ${result.error || 'Unknown error'}`,
-								});
-							}
+					// Emit in selection order (most-diverse first) rather than grouping
+					// all URLs ahead of all base64 inputs, and map each download back to
+					// its entry by position - looking it up by URL string resolved every
+					// duplicate URL to the first occurrence's index.
+					let urlPosition = 0;
+					for (const { index, source } of selectedImages) {
+						if (!isUrl(source)) {
+							contentItems.push({
+								type: 'image' as const,
+								data: source,
+								mimeType: sniffBase64ImageMimeType(source),
+							});
+							continue;
 						}
-					}
 
-					// Add base64 images directly
-					for (const base64Image of base64Images) {
-						contentItems.push({
-							type: 'image' as const,
-							data: base64Image,
-							mimeType: 'image/jpeg', // Our utility converts to JPEG
-						});
+						// downloadImages returns partial results when it hits its own
+						// timeout, so trailing entries can legitimately be missing
+						const result = downloadResults[urlPosition++];
+
+						if (result?.success && result.data) {
+							contentItems.push({
+								type: 'image' as const,
+								data: result.data,
+								mimeType: result.mimeType,
+							});
+						} else {
+							contentItems.push({
+								type: 'text' as const,
+								text: `Failed to download image at index ${index}: ${result?.error || 'Download timed out'}`,
+							});
+						}
 					}
 
 					if (contentItems.length === 0) {
@@ -1189,14 +1241,18 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					// Import the utility function
 					const { searchBibtex } = await import("../utils/bibtex.js");
 
-					// Execute search
-					const results = await searchBibtex({ query, num, year, author });
+					// Execute search. `warnings` carries partial-coverage failures - one
+					// provider rate-limiting used to silently halve the results.
+					const warnings: string[] = [];
+					const results = await searchBibtex({ query, num, year, author }, warnings);
 
 					if (results.length === 0) {
 						return {
 							content: [{
 								type: "text" as const,
-								text: "No results found. Try different search terms or broader keywords."
+								text: warnings.length > 0
+									? `No results found (${warnings.join("; ")}). Try different search terms or broader keywords.`
+									: "No results found. Try different search terms or broader keywords."
 							}]
 						};
 					}
@@ -1216,7 +1272,9 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					return {
 						content: [{
 							type: "text" as const,
-							text: yamlStringify({ results: formattedResults })
+							text: yamlStringify(warnings.length > 0
+								? { warnings, results: formattedResults }
+								: { results: formattedResults })
 						}]
 					};
 				} catch (error) {
@@ -1294,18 +1352,21 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 
 					// Limit floats to prevent large responses
 					const maxFloats = 20;
-					const totalFloats = data.floats.length;
-					const floatsToReturn = data.floats.slice(0, maxFloats);
+					const floats = Array.isArray(data?.floats) ? data.floats : [];
+					const totalFloats = floats.length;
+					const floatsToReturn = floats.slice(0, maxFloats);
 
 					// Return each float as an image with metadata
 					const contentItems: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [];
 
-					// Add summary metadata
+					// Add summary metadata. `floats`/`meta` are read defensively: an
+					// error-shaped 200 response used to throw a TypeError here and the
+					// caller only saw "Cannot read properties of undefined".
 					const summaryMeta: Record<string, any> = {
-						id: data.id,
-						num_floats: data.meta.num_floats,
-						num_pages: data.meta.num_pages,
-						latency_ms: data.meta.latency
+						id: data?.id,
+						num_floats: data?.meta?.num_floats ?? totalFloats,
+						num_pages: data?.meta?.num_pages,
+						latency_ms: data?.meta?.latency
 					};
 					if (totalFloats > maxFloats) {
 						summaryMeta.returned_floats = maxFloats;

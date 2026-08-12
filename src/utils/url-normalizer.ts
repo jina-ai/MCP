@@ -7,9 +7,16 @@ export function normalizeUrl(urlString: string, options = {
 	removeXAnalytics: true
 }) {
 	try {
-		urlString = urlString.replace(/\s+/g, '').trim();
+		// Only strip leading/trailing whitespace and the C0 control characters the
+		// WHATWG URL parser ignores. Collapsing *all* whitespace deleted spaces
+		// inside the path and query too, so
+		// "https://en.wikipedia.org/wiki/New York City" was fetched as
+		// ".../NewYorkCity" and the caller was told the original URL had 404'd.
+		// new URL() percent-encodes interior spaces correctly on its own.
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: C0 controls are exactly what must be removed
+		urlString = urlString.trim().replace(/[\u0000-\u001F\u007F]/g, '');
 
-		if (!urlString?.trim()) {
+		if (!urlString) {
 			throw new Error('Empty URL');
 		}
 

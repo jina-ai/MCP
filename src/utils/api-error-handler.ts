@@ -1,8 +1,38 @@
 /**
+ * Pull whatever explanation the API put in the error body.
+ *
+ * Without this the caller only ever saw the status line, so a 422 "input exceeds
+ * the maximum length" was indistinguishable from any other 422 and the model had
+ * nothing to act on. Bounded, and never throws.
+ */
+async function readErrorDetail(response: Response): Promise<string> {
+	try {
+		const body = (await response.text()).slice(0, 500).trim();
+		if (!body) return "";
+
+		try {
+			const parsed = JSON.parse(body) as Record<string, any>;
+			const detail =
+				parsed?.detail ??
+				parsed?.message ??
+				parsed?.error?.message ??
+				(typeof parsed?.error === "string" ? parsed.error : undefined);
+			if (detail) return typeof detail === "string" ? detail : JSON.stringify(detail);
+		} catch {
+			// not JSON, fall through to the raw body
+		}
+
+		return body;
+	} catch {
+		return "";
+	}
+}
+
+/**
  * Utility function to handle common API errors for Jina AI services
  * Returns a standardized error response object for MCP tools
  */
-export function handleApiError(response: Response, context: string = "API request") {
+export async function handleApiError(response: Response, context: string = "API request") {
 	if (response.status === 401) {
 		return {
 			content: [
@@ -39,11 +69,12 @@ export function handleApiError(response: Response, context: string = "API reques
 	}
 	
 	// Default error message for other HTTP errors
+	const detail = await readErrorDetail(response);
 	return {
 		content: [
 			{
 				type: "text" as const,
-				text: `Error: ${context} failed - ${response.status} ${response.statusText}`,
+				text: `Error: ${context} failed - ${response.status} ${response.statusText}${detail ? ` - ${detail}` : ""}`,
 			},
 		],
 		isError: true,

@@ -1,4 +1,10 @@
 import { stringify as yamlStringify } from "yaml";
+import { withDeadline } from "./timeout.js";
+
+// A single search/read had no client-side deadline at all: a hung upstream held
+// the Worker invocation open until the platform killed it. Every outbound call
+// now carries an AbortSignal so the request is actually cancelled, not abandoned.
+const SEARCH_REQUEST_TIMEOUT_MS = 30000;
 
 // ============================================================================
 // TYPES AND INTERFACES
@@ -71,6 +77,7 @@ export async function executeWebSearch(
     try {
         const response = await fetch('https://svip.jina.ai/', {
             method: 'POST',
+            signal: AbortSignal.timeout(SEARCH_REQUEST_TIMEOUT_MS),
             headers: {
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
@@ -107,6 +114,7 @@ export async function executeArxivSearch(
     try {
         const response = await fetch('https://svip.jina.ai/', {
             method: 'POST',
+            signal: AbortSignal.timeout(SEARCH_REQUEST_TIMEOUT_MS),
             headers: {
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
@@ -141,6 +149,7 @@ export async function executeSsrnSearch(
     try {
         const response = await fetch('https://svip.jina.ai/', {
             method: 'POST',
+            signal: AbortSignal.timeout(SEARCH_REQUEST_TIMEOUT_MS),
             headers: {
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
@@ -200,6 +209,9 @@ export interface JinaBlogRerankConfig {
 }
 
 let blogPostCache: { fetchedAt: number; posts: IndexedBlogPost[] } | null = null;
+// Concurrent cold requests used to each pull the whole catalog; they now share
+// one in-flight fetch.
+let blogPostCacheInFlight: Promise<IndexedBlogPost[]> | null = null;
 
 const BLOG_STOPWORDS = new Set([
     'a', 'about', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'can', 'do', 'does',
@@ -244,6 +256,21 @@ async function fetchIndexedBlogPosts(ghostApiKey: string): Promise<IndexedBlogPo
         return blogPostCache.posts;
     }
 
+    // Single-flight: a burst of requests arriving on a cold isolate (or a
+    // parallel_search over N queries, which calls this N times at once) would
+    // otherwise each download the entire post catalog.
+    if (blogPostCacheInFlight) {
+        return blogPostCacheInFlight;
+    }
+
+    blogPostCacheInFlight = fetchAndIndexBlogPosts(ghostApiKey).finally(() => {
+        blogPostCacheInFlight = null;
+    });
+
+    return blogPostCacheInFlight;
+}
+
+async function fetchAndIndexBlogPosts(ghostApiKey: string): Promise<IndexedBlogPost[]> {
     const params = new URLSearchParams({
         key: ghostApiKey,
         limit: 'all',
@@ -253,6 +280,7 @@ async function fetchIndexedBlogPosts(ghostApiKey: string): Promise<IndexedBlogPo
 
     const response = await fetch(`${GHOST_POSTS_ENDPOINT}?${params.toString()}`, {
         method: 'GET',
+        signal: AbortSignal.timeout(SEARCH_REQUEST_TIMEOUT_MS),
         headers: { 'Accept': 'application/json' },
     });
 
@@ -344,6 +372,7 @@ async function rerankBlogPosts(
     try {
         const response = await fetch(`${config.apiBaseUrl || 'https://api.jina.ai'}/v1/rerank`, {
             method: 'POST',
+            signal: AbortSignal.timeout(SEARCH_REQUEST_TIMEOUT_MS),
             headers: {
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
@@ -418,6 +447,7 @@ export async function executeImageSearch(
     try {
         const response = await fetch('https://svip.jina.ai/', {
             method: 'POST',
+            signal: AbortSignal.timeout(SEARCH_REQUEST_TIMEOUT_MS),
             headers: {
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
@@ -458,24 +488,25 @@ export async function executeParallelSearches<T>(
 ): Promise<ParallelSearchResult[]> {
     const { timeout = 30000 } = options;
 
-    // Execute all searches in parallel
-    const searchPromises = searches.map(async (searchArgs) => {
-        try {
-            return await searchFunction(searchArgs);
-        } catch (error) {
-            return { error: `Search failed: ${error instanceof Error ? error.message : String(error)}` } as SearchError;
-        }
-    });
-
-    // Race all searches against timeout
-    const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Parallel search timed out after ${timeout}ms`)), timeout)
+    // Each search gets its own deadline. Previously the whole batch was raced
+    // against one rejecting timeout, so a single slow query discarded every
+    // search that had already come back - the caller saw one generic timeout
+    // error instead of the results it had actually paid for.
+    return Promise.all(
+        searches.map((searchArgs) =>
+            withDeadline<SearchResultOrError>(
+                async () => {
+                    try {
+                        return await searchFunction(searchArgs);
+                    } catch (error) {
+                        return { error: `Search failed: ${error instanceof Error ? error.message : String(error)}` } as SearchError;
+                    }
+                },
+                timeout,
+                () => ({ error: `Search timed out after ${timeout}ms` })
+            )
+        )
     );
-
-    return Promise.race([
-        Promise.all(searchPromises),
-        timeoutPromise
-    ]);
 }
 
 // ============================================================================

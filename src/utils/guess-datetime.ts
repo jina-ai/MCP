@@ -1,8 +1,77 @@
 // Utility functions for guessing datetime from web pages
 // Refactored from Cloudflare Worker for MCP tool usage
 
+// The web predates neither of these, so anything outside the window is a parse
+// artifact rather than a publication date - a copyright range like "1999-2030",
+// an event scheduled for next year, a template placeholder, or a unix timestamp
+// read at the wrong scale. The upper bound keeps 48h of slack for clock skew and
+// for timezone-less strings that land "tomorrow" relative to UTC.
+const EARLIEST_PLAUSIBLE_PAGE_DATE = Date.UTC(1990, 0, 1);
+const FUTURE_TOLERANCE_MS = 48 * 60 * 60 * 1000;
+
+// Every extractor below runs its own regex passes over the whole document, so the
+// body has to be bounded: an unbounded response turns one tool call into an
+// unbounded amount of Worker CPU. Timestamps live in <head> and in feed preambles,
+// which comfortably fit these caps.
+const MAX_PAGE_BYTES = 2 * 1024 * 1024;
+const MAX_FEED_BYTES = 512 * 1024;
+const PAGE_FETCH_TIMEOUT_MS = 15000;
+const FEED_FETCH_TIMEOUT_MS = 5000;
+
+/** Read a response body as text, stopping after maxBytes */
+async function readCapped(response: Response, maxBytes: number): Promise<string> {
+    if (!response.body) return '';
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let text = '';
+    let total = 0;
+
+    try {
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!value) continue;
+
+            if (total + value.byteLength >= maxBytes) {
+                text += decoder.decode(value.subarray(0, maxBytes - total));
+                return text;
+            }
+
+            total += value.byteLength;
+            text += decoder.decode(value, { stream: true });
+        }
+        text += decoder.decode();
+    } finally {
+        await reader.cancel().catch(() => { });
+    }
+
+    return text;
+}
+
+function isPlausiblePageDate(date: Date | null): boolean {
+    if (!date) return false;
+    const t = date.getTime();
+    if (Number.isNaN(t)) return false;
+    return t >= EARLIEST_PLAUSIBLE_PAGE_DATE && t <= Date.now() + FUTURE_TOLERANCE_MS;
+}
+
+/** new Date(value), or null when it is unparseable or not a plausible page date */
+function toPlausibleDate(value: string | number): Date | null {
+    const date = new Date(value);
+    return isPlausiblePageDate(date) ? date : null;
+}
+
 // Improved parseDate function to handle more date formats
 function parseDate(dateStr: string): Date | null {
+    const parsed = parseDateUnfiltered(dateStr);
+    // A date the page cannot plausibly have been updated at is worse than no date:
+    // determineBestUpdateTime() picks the *most recent* candidate, so a single
+    // stray future date outranks every real signal on the page.
+    return isPlausiblePageDate(parsed) ? parsed : null;
+}
+
+function parseDateUnfiltered(dateStr: string): Date | null {
     if (!dateStr) return null;
 
     // Clean up the string (remove extra spaces, normalize separators)
@@ -255,8 +324,8 @@ function extractHtmlComments(html: string): Array<{
                 // Looks like a date but couldn't parse, try manual parsing
                 const parts = versionMatch[1].split(/[-\/]/);
                 if (parts.length === 3 && parts[0].length === 4) {
-                    const date = new Date(`${parts[0]}-${parts[1]}-${parts[2]}`);
-                    if (!isNaN(date.getTime())) {
+                    const date = toPlausibleDate(`${parts[0]}-${parts[1]}-${parts[2]}`);
+                    if (date) {
                         results.push({
                             type: 'htmlComment',
                             date: date.toISOString(),
@@ -318,7 +387,10 @@ function extractGitInfo(html: string): {
     }
 
     // Look for GitLab/GitHub deploy comments
-    const deployPattern = /<!--[\s\S]*?(?:deployed|deployment|deploy)[\s\S]*?((?:\d{4}-\d{2}-\d{2})|(?:\d{2}\/\d{2}\/\d{4}))[\\s\\S]*?-->/i;
+    // NB: the trailing class must be [\s\S] (any char). `[\\s\\S]` inside a regex
+    // *literal* is the three-character class {\, s, S}, which made this pattern
+    // match only when nothing but backslashes/s/S sat between the date and `-->`.
+    const deployPattern = /<!--[\s\S]*?(?:deployed|deployment|deploy)[\s\S]*?((?:\d{4}-\d{2}-\d{2})|(?:\d{2}\/\d{2}\/\d{4}))[\s\S]*?-->/i;
     const deployMatch = html.match(deployPattern);
 
     if (deployMatch) {
@@ -579,16 +651,16 @@ function extractJavaScriptTimestamps(html: string): Array<{
         for (const pattern of timestampPatterns) {
             const match = scriptContent.match(pattern);
             if (match && match[1]) {
-                let date;
+                let date: Date | null;
                 if (/^\d+$/.test(match[1])) {
                     // Handle Unix timestamps (in seconds or milliseconds)
                     const timestamp = parseInt(match[1]);
-                    date = new Date(timestamp > 9999999999 ? timestamp : timestamp * 1000);
+                    date = toPlausibleDate(timestamp > 9999999999 ? timestamp : timestamp * 1000);
                 } else {
-                    date = new Date(match[1]);
+                    date = toPlausibleDate(match[1]);
                 }
 
-                if (!isNaN(date.getTime())) {
+                if (date) {
                     results.push({
                         type: 'jsTimestamp',
                         date: date.toISOString(),
@@ -603,8 +675,8 @@ function extractJavaScriptTimestamps(html: string): Array<{
         const dataObjectPattern = /(?:article|page|post|document|content|data)(?:Data)?\s*[=:]\s*\{[\s\S]*?(?:updated|modified|published|date)(?:At|On|Date|Time)?\s*[=:]\s*["']?([^,"'\}\s]+)["']?/i;
         const dataObjectMatch = scriptContent.match(dataObjectPattern);
         if (dataObjectMatch && dataObjectMatch[1]) {
-            const date = new Date(dataObjectMatch[1]);
-            if (!isNaN(date.getTime())) {
+            const date = toPlausibleDate(dataObjectMatch[1]);
+            if (date) {
                 results.push({
                     type: 'jsDataObject',
                     date: date.toISOString(),
@@ -626,8 +698,8 @@ function extractJavaScriptTimestamps(html: string): Array<{
             const dateFields = ['dateModified', 'dateUpdated', 'datePublished', 'uploadDate'];
             for (const field of dateFields) {
                 if (jsonLd[field]) {
-                    const date = new Date(jsonLd[field]);
-                    if (!isNaN(date.getTime())) {
+                    const date = toPlausibleDate(jsonLd[field]);
+                    if (date) {
                         results.push({
                             type: 'jsonLd',
                             field: field,
@@ -675,13 +747,25 @@ async function extractFeedTimestamps(targetUrl: string): Promise<Array<{
             `${baseUrl}/sitemap.xml`
         ];
 
-        for (const feedUrl of feedUrls) {
-            try {
-                const response = await fetch(feedUrl);
-                if (!response.ok) continue;
+        // These were fetched one after another with no timeout, so a site that
+        // serves a slow 404 for /feed delayed the other six - up to 7 serial
+        // round-trips on every guess_datetime_url call. They are independent, so
+        // fan them out and bound each one. allSettled preserves feedUrls order,
+        // keeping the emitted results deterministic.
+        const fetched = await Promise.allSettled(
+            feedUrls.map(async (feedUrl) => {
+                const response = await fetch(feedUrl, {
+                    signal: AbortSignal.timeout(FEED_FETCH_TIMEOUT_MS),
+                });
+                if (!response.ok) return null;
+                return { feedUrl, text: await readCapped(response, MAX_FEED_BYTES) };
+            })
+        );
 
-                const text = await response.text();
-
+        for (const settled of fetched) {
+            if (settled.status !== 'fulfilled' || !settled.value) continue;
+            const { feedUrl, text } = settled.value;
+            {
                 // Check for RSS feed
                 if (text.includes('<rss') || text.includes('<rdf')) {
                     // Look for lastBuildDate in RSS
@@ -746,9 +830,6 @@ async function extractFeedTimestamps(targetUrl: string): Promise<Array<{
                         }
                     }
                 }
-            } catch (e) {
-                // Skip failed feed requests
-                continue;
             }
         }
     } catch (e) {
@@ -1081,8 +1162,8 @@ function determineBestUpdateTime(updateTimes: any) {
 
     // Use HTTP Last-Modified even if it matches server time, but with lower confidence
     if (updateTimes.lastModified) {
-        const lastModDate = new Date(updateTimes.lastModified);
-        if (!isNaN(lastModDate.getTime())) {
+        const lastModDate = toPlausibleDate(updateTimes.lastModified);
+        if (lastModDate) {
             // Check if Last-Modified differs significantly from server time
             if (updateTimes.date) {
                 const serverDate = new Date(updateTimes.date);
@@ -1141,13 +1222,15 @@ export async function guessDatetimeFromUrl(url: string): Promise<{
 }> {
     try {
         // Fetch the target webpage
-        const response = await fetch(url);
+        const response = await fetch(url, {
+            signal: AbortSignal.timeout(PAGE_FETCH_TIMEOUT_MS),
+        });
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        const text = await response.text();
+        const text = await readCapped(response, MAX_PAGE_BYTES);
 
         // Extract all possible time indicators
         const updateTimes = await extractAllTimeIndicators(response, text, url);
