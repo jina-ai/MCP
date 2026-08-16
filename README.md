@@ -82,17 +82,14 @@ claude mcp add -s user --transport http jina https://mcp.jina.ai/v1 \
   --header "Authorization: Bearer ${JINA_API_KEY}"
 ```
 
-For OpenAI Codex: find `~/.codex/config.toml` and add the following:
+For OpenAI Codex: set `JINA_API_KEY` as an environment variable before starting Codex, then add the following to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.jina-mcp-server]
-command = "npx"
-args = [
-    "-y",
-    "mcp-remote",
-    "https://mcp.jina.ai/v1",
-    "--header",
-    "Authorization: Bearer ${JINA_API_KEY}"]
+url = "https://mcp.jina.ai/v1"
+bearer_token_env_var = "JINA_API_KEY"
 ```
+
+This uses Codex's native Streamable HTTP support and keeps the API key out of the config file.
 
 ## Tool Filtering before Registering
 
