@@ -309,10 +309,19 @@ Three things worth knowing before tuning:
 A plain read parses the page's HTML. That returns nothing useful when the text is not in the markup — a scanned page, an image-only PDF — and it tends to flatten formulas and table structure even when it does work. Pass `ocr` and the rendered page goes through [jina-ocr-v1](https://jina.ai/models/jina-ocr-v1) as an image instead, which returns Markdown with the formulas and tables intact.
 
 ```jsonc
-{ "url": "https://arxiv.org/pdf/2609.03181", "ocr": true }
+{ "url": "https://arxiv.org/pdf/2609.03181", "ocr": true }            // page 1
+{ "url": "https://arxiv.org/pdf/2609.03181", "ocr": true, "page": 2 } // page 2
 ```
 
-It costs **40x the tokens** of an ordinary read, so it is off by default and worth turning on only when the HTML path has failed you or the layout is the point. `parallel_read_url` takes the same flag per URL.
+**It parses one page per call.** Page 1 unless `page` says otherwise, so a long document needs one call per page rather than one call for the document. Measured against arXiv 2609.03181, a 20-page paper:
+
+| | bytes returned | tokens billed |
+|---|---|---|
+| plain read | 49,466 (whole PDF) | 13,864 |
+| `ocr: true` | 2,963 (page 1) | 61,520 |
+| `ocr: true, page: 2` | 2,749 (page 2) | 62,720 |
+
+So it is off by default, and worth turning on only when the HTML path has failed you or the layout is the point. `parallel_read_url` takes both flags per entry, which is also the cheapest way to OCR several pages of one document: repeat the same url with different `page` values.
 
 ### What is the difference between `search_web` and `search_web_deep`?
 
