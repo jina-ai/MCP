@@ -19,6 +19,14 @@ export interface ReadUrlConfig {
     withAllLinks?: boolean;
     withAllImages?: boolean;
     /**
+     * Read the rendered page as an image with jina-ocr-v1 instead of parsing
+     * its HTML. That is the only way to get at a scanned document or a PDF
+     * whose text is not in the markup, and it keeps formulas and table
+     * structure. It costs 40x the tokens of an ordinary read, so it stays off
+     * unless asked for.
+     */
+    ocr?: boolean;
+    /**
      * When set, the page is reduced to the passage(s) that best answer this
      * question, by the same read -> chunk -> rerank pipeline that backs
      * search_web_deep. Absent (the default), the full content is returned
@@ -148,6 +156,10 @@ export async function readUrlFromConfig(
             headers['X-With-Images-Summary'] = 'true';
         } else {
             headers['X-Retain-Images'] = 'none';
+        }
+
+        if (urlConfig.ocr) {
+            headers['X-Respond-With'] = 'jina-ocr-v1';
         }
 
         // svip is only involved when there is BOTH a url and a question. Without

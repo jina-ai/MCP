@@ -304,6 +304,16 @@ Three things worth knowing before tuning:
 - **Code blocks and tables are stripped before ranking.** The chunker removes them along with nav furniture, which is what stops boilerplate from winning on lexical overlap. The trade-off is that install commands and spec tables are not eligible passages, so *"how do I install X"* is a weak fit for this parameter.
 - **Latency is roughly double a plain read**, since the passage extraction runs alongside the fetch and adds a rerank call. `parallel_read_url` raises its own timeout floor to 60s when any entry has a `question`.
 
+### Reading a scanned document or a PDF
+
+A plain read parses the page's HTML. That returns nothing useful when the text is not in the markup — a scanned page, an image-only PDF — and it tends to flatten formulas and table structure even when it does work. Pass `ocr` and the rendered page goes through [jina-ocr-v1](https://jina.ai/models/jina-ocr-v1) as an image instead, which returns Markdown with the formulas and tables intact.
+
+```jsonc
+{ "url": "https://arxiv.org/pdf/2609.03181", "ocr": true }
+```
+
+It costs **40x the tokens** of an ordinary read, so it is off by default and worth turning on only when the HTML path has failed you or the layout is the point. `parallel_read_url` takes the same flag per URL.
+
 ### What is the difference between `search_web` and `search_web_deep`?
 
 `search_web` returns the snippet the search engine picked — around 20 words, often a keyword-bearing fragment that never answers the question. `search_web_deep` also reads each page via [Reader](https://jina.ai/reader), splits it into ~100-word passages at sentence boundaries, and scores every passage from every page in one listwise [Reranker](https://jina.ai/reranker) call, so any page's passage can outrank any other's. `snippet_source=auto` (the default) enters each page's engine snippet as one more candidate and the `snippet_source` field on each result says which won; `content` never enters it and omits pages it could not read, so it may return fewer than `num`.
