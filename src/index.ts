@@ -4,7 +4,7 @@ import { registerJinaTools } from "./tools/jina-tools.js";
 import { stringify as yamlStringify } from "yaml";
 
 // Build-time constants (can be replaced by build tools)
-const SERVER_VERSION = "1.8.1";
+const SERVER_VERSION = "1.9.0";
 const SERVER_NAME = "jina-mcp";
 
 // Tool tags mapping for filtering
