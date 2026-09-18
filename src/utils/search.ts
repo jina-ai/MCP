@@ -475,62 +475,6 @@ export async function executeImageSearch(
 }
 
 // ============================================================================
-// DEEP WEB SEARCH
-// ============================================================================
-
-const DEEP_SEARCH_REQUEST_TIMEOUT_MS = 60000;
-
-export interface SearchWebDeepArgs {
-    query: string;
-    num?: number;
-    /**
-     * `auto` lets each page's extracted passage compete with the search engine's
-     * own snippet, so a result may come from either. `content` returns only
-     * extracted passages and omits pages that produced none, which can yield
-     * fewer than `num` results.
-     */
-    snippet_source?: 'auto' | 'content';
-}
-
-export async function executeWebDeepSearch(
-    searchArgs: SearchWebDeepArgs,
-    bearerToken: string
-): Promise<SearchResultOrError> {
-    try {
-        const num = Math.min(Math.max(searchArgs.num || 5, 1), 10);
-        const contentOnly = searchArgs.snippet_source === 'content';
-        // Content-only drops pages that could not be read instead of padding the
-        // response from the SERP, so it needs more candidates to fill `num`.
-        const readNum = Math.min(num + (contentOnly ? 8 : 3), 20);
-        const params = new URLSearchParams({
-            q: searchArgs.query,
-            meta: 'deep',
-            num: String(num),
-            read_num: String(readNum),
-            deep_timeout: '25000',
-            ...(contentOnly && { snippet_source: 'content' }),
-        });
-        const response = await fetch(`https://svip.jina.ai/?${params.toString()}`, {
-            method: 'GET',
-            signal: AbortSignal.timeout(DEEP_SEARCH_REQUEST_TIMEOUT_MS),
-            headers: {
-                'Accept': 'application/json',
-                'Authorization': `Bearer ${bearerToken}`,
-            },
-        });
-
-        if (!response.ok) {
-            return { error: `Deep web search failed for query "${searchArgs.query}": ${response.statusText}` };
-        }
-
-        const data = await response.json() as any;
-        return { query: searchArgs.query, results: data.results || [] };
-    } catch (error) {
-        return { error: `Deep web search failed for query "${searchArgs.query}": ${error instanceof Error ? error.message : String(error)}` };
-    }
-}
-
-// ============================================================================
 // PARALLEL SEARCH EXECUTION
 // ============================================================================
 

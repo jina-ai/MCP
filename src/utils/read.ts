@@ -5,7 +5,7 @@ import { withDeadline } from "./timeout.js";
 // open until the platform killed it, taking the sibling reads down with it.
 const READ_REQUEST_TIMEOUT_MS = 30000;
 
-/** Passage size for question-grounded reads, in words (CJK: characters). */
+/** Passage size for question-grounded reads, in words. Counted in words in every script. */
 export const DEFAULT_SNIPPET_CHUNK_SIZE = 100;
 /** Passages returned for question-grounded reads. */
 export const DEFAULT_SNIPPET_TOPK = 1;
@@ -39,14 +39,14 @@ export interface ReadUrlConfig {
     page?: number;
     /**
      * When set, the page is reduced to the passage(s) that best answer this
-     * question, by the same read -> chunk -> rerank pipeline that backs
-     * search_web_deep. Absent (the default), the full content is returned
-     * exactly as before.
+     * question, by the read -> chunk -> rerank pipeline at svip.jina.ai.
+     * Absent (the default), the full content is returned exactly as before.
      */
     question?: string;
     /**
-     * Target passage size for question-grounded reads, in words (CJK:
-     * characters). Default 100.
+     * Target passage size for question-grounded reads, in words, split at
+     * sentence boundaries. Counted in words in every script, so CJK passages are
+     * as long as English ones, not shorter. Default 100.
      *
      * Named for what the server measures. It is not a token count: passages are
      * split at sentence boundaries and sized by `textSize`, which counts CJK
@@ -81,12 +81,13 @@ export type ReadUrlResponse = ReadUrlResult | ReadUrlError;
  * Read a page and return only the passages answering `question`.
  *
  * Delegates to svip.jina.ai's `url` + `q` form rather than chunking and ranking
- * here. That endpoint runs the same code as search_web_deep, so a passage means
- * the same thing from either tool, and its chunker does markdown-aware work this
- * Worker has no business duplicating: it strips code blocks, tables and nav
- * furniture before splitting, which is the difference between returning a bare
- * `## Heading` and returning the paragraph under it. Doing it server-side also
- * keeps the reranker call off the Worker's CPU budget.
+ * here, which keeps the chunker and the reranker call off the Worker's CPU.
+ *
+ * NOTE: an earlier version of this comment claimed the server chunker strips code
+ * blocks, tables and nav furniture before splitting. Measured, it does not:
+ * markdown tables, inline code and site footers all appear in returned passages.
+ * Do not write callers that assume a passage excludes code, and keep the README's
+ * warning about verifying commands and identifiers against the source.
  *
  * Only ever called with BOTH a url and a non-empty question. svip's read path
  * is keyed on that pair: a url with no `q` there is a search for the literal
@@ -237,10 +238,9 @@ export async function readUrlFromConfig(
             if (snippetResult) {
                 structuredData.question = question;
                 structuredData.snippets = snippetResult.snippets;
-                // The full body is deliberately omitted: the point of passing a
-                // question is to not carry the whole page. `snippet_source`
-                // mirrors the field search_web_deep sets, so a caller can tell a
-                // ranked passage from a fallback full read.
+                // The full body is omitted: the point of passing a question is to
+                // not carry the whole page. `snippet_source` separates a ranked
+                // passage from the full-content fallback.
                 structuredData.snippet_source = 'content';
 
                 return {

@@ -9,7 +9,7 @@ const SERVER_NAME = "jina-mcp";
 
 // Tool tags mapping for filtering
 const TOOL_TAGS: Record<string, string[]> = {
-	search: ["search_web", "search_web_deep", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog", "search_bibtex"],
+	search: ["search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog", "search_bibtex"],
 	parallel: ["parallel_search_web", "parallel_search_arxiv", "parallel_search_ssrn", "parallel_read_url"],
 	read: ["read_url", "parallel_read_url", "capture_screenshot_url"],
 	utility: ["primer", "show_api_key", "expand_query", "guess_datetime_url", "extract_pdf"],
@@ -19,7 +19,7 @@ const TOOL_TAGS: Record<string, string[]> = {
 // All available tools
 const ALL_TOOLS = [
 	"primer", "show_api_key", "read_url", "capture_screenshot_url", "guess_datetime_url",
-	"search_web", "search_web_deep", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog", "search_bibtex", "expand_query",
+	"search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog", "search_bibtex", "expand_query",
 	"parallel_search_web", "parallel_search_arxiv", "parallel_search_ssrn", "parallel_read_url",
 	"sort_by_relevance", "classify_text", "deduplicate_strings", "deduplicate_images", "extract_pdf"
 ];
@@ -96,7 +96,7 @@ const SERVER_INSTRUCTIONS = `Web access: search the live web, read URLs, search 
 Use for anything online - current events, a URL the user pasted, a claim needing a source. Not for local files, code execution, or databases.
 
 Picking a tool:
-- search_web returns engine snippets. search_web_deep reads each result page and returns the passage that answers the query - slower, use when the answer is inside a page rather than in its title.
+- search_web returns titles, URLs and engine snippets. For page-level passages, pass \`question\` to read_url or parallel_read_url on the results you chose. A snippet is not a source for exact values: verify version numbers, commands and error strings against the page.
 - read_url fetches one page as markdown. Pass its \`question\` to get only the answering passages instead of the whole body; this is much cheaper than reading a full page into context.
 - Prefer the parallel_* variants over repeated single calls.
 - search_arxiv for preprints, search_ssrn for social science and finance, search_bibtex for citations, search_jina_blog for Jina's own models and releases.

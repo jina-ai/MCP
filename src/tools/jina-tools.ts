@@ -8,13 +8,11 @@ import { applyTokenGuardrail } from "../utils/token-guardrail.js";
 import {
 	executeParallelSearches,
 	executeWebSearch,
-	executeWebDeepSearch,
 	executeArxivSearch,
 	executeSsrnSearch,
 	executeImageSearch,
 	executeJinaBlogSearch,
 	type SearchWebArgs,
-	type SearchWebDeepArgs,
 	type SearchArxivArgs,
 	type SearchSsrnArgs,
 	type SearchImageArgs,
@@ -366,55 +364,6 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					}
 
 					return createErrorResponse("Invalid query format");
-				} catch (error) {
-					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
-				}
-			},
-		);
-	}
-
-	// Search Web Deep tool - deep web search with content-grounded snippets
-	if (isToolEnabled("search_web_deep")) {
-		server.tool(
-			"search_web_deep",
-			"Search the web, then read each result page and return the passage that best answers the query. Use when the answer is in page text rather than in titles or snippets. Slower than search_web (2-20s).",
-			{
-				query: z.string(),
-				num: z.number().int().min(1).max(10).default(5).describe("Results to return, 1-10. Each is a fully-read page, so higher is slower."),
-				snippet_source: z.enum(["auto", "content"]).default("auto").describe("'auto' keeps whichever is better, the page passage or the engine snippet. 'content' returns only page passages and omits unreadable pages, so you may get fewer than num."),
-			},
-			async ({ query, num, snippet_source }: { query: string; num: number; snippet_source: 'auto' | 'content' }) => {
-				try {
-					const props = getProps();
-
-					const tokenError = checkBearerToken(props.bearerToken);
-					if (tokenError) {
-						return tokenError;
-					}
-
-					const searchResult = await executeWebDeepSearch(
-						{ query, num, snippet_source } as SearchWebDeepArgs,
-						props.bearerToken as string
-					);
-
-					// snippet_source=content omits pages it could not read rather than
-					// padding from the SERP, so an empty result set is a legitimate
-					// outcome. Say why instead of returning a bare empty content array,
-					// which reads as a malfunction and tells the caller nothing.
-					if (!('error' in searchResult) && searchResult.results.length === 0) {
-						return {
-							content: [{
-								type: "text" as const,
-								text: snippet_source === 'content'
-									? `No content-grounded results for "${query}": no result page could be read and extracted in time. Retry with snippet_source='auto' to allow search-engine snippets, or use search_web.`
-									: `No results for "${query}".`,
-							}],
-						};
-					}
-
-					return {
-						content: formatSingleSearchResultToContentItems(searchResult),
-					};
 				} catch (error) {
 					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
 				}
