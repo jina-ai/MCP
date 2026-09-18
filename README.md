@@ -95,7 +95,7 @@ args = [
 
 ## Tool Filtering before Registering
 
-Registering a tool costs context tokens for its name, description and schema whether or not it is called. All 21 registered spends that budget up front.
+Registering a tool costs context tokens for its name, description and schema whether or not it is called. With 21 tools, that budget is spent before the first request.
 
 Filtering server-side through query parameters on the endpoint URL (`/v1?...`) excludes tools before registration, so the client never sees them.
 
@@ -214,7 +214,7 @@ Cursor and Claude Desktop (Windows) [have a bug](https://www.npmjs.com/package/m
 
 ### My LLM never uses some tools
 
-If all tools are enabled but the model still ignores some, that is normal: models reach for what they were trained on. `parallel_*` tools in particular are rarely called unless instructed. [Some research says LLMs must be trained to use `parallel_*`](https://arxiv.org/abs/2508.09303). Models like Qwen3-Next prefer singleton tools called with an array of queries, which this MCP also supports. In Cursor, add this rule to a `.mdc` file:
+If all tools are enabled but the model still ignores some, that is expected: models call the tools they were trained on. `parallel_*` tools are rarely called unless instructed. [Some research says LLMs must be trained to use `parallel_*`](https://arxiv.org/abs/2508.09303). Models like Qwen3-Next prefer singleton tools called with an array of queries, which this MCP also supports. In Cursor, add this rule to a `.mdc` file:
 
 ```text
 ---
@@ -230,7 +230,7 @@ Claude Code, Claude Desktop, and Cursor enforce a fixed 25k token limit on MCP t
 
 Items are kept whole, in order, while they fit. The first that does not fit is cut to a prefix that does, and later items are dropped. A `[jina-mcp] ...` note records what was truncated or omitted, so a partial document is marked partial. At least one item always survives, even one over budget.
 
-The server aims under the limit, not at it. It counts tokens with cl100k, the client with its own tokenizer, the cut is a proportional character estimate, and the client measures the serialized JSON payload instead of the raw text. It therefore also enforces a ceiling of 3 bytes per allowed token, which holds across tokenizers for ASCII prose (~3.6 bytes/token) and CJK (~3 bytes/token). Under-cutting loses content; a rejected response loses all of it.
+The server targets below the limit. It counts tokens with cl100k, the client with its own tokenizer, the cut is a proportional character estimate, and the client measures the serialized JSON payload instead of the raw text. It therefore also enforces a ceiling of 3 bytes per allowed token, which holds across tokenizers for ASCII prose (~3.6 bytes/token) and CJK (~3 bytes/token). Cutting short loses part of the content. A rejected response loses all of it.
 
 Any client can set its own budget with `max_tokens` on the endpoint URL (for example `https://mcp.jina.ai/v1?max_tokens=50000`), and `max_tokens=0` disables truncation entirely. Clients with configurable limits, such as OpenAI Codex (`tool_output_token_limit`), are otherwise left alone.
 
@@ -276,15 +276,15 @@ This approach filters tools at the proxy level before they reach the MCP client.
 
 ### Reading a page with a question in mind
 
-`read_url` returns the whole page. Pass `question` and the page is chunked, its passages are scored against the query by [Reranker](https://jina.ai/reranker) v3.5, and only the top ones come back.
+`read_url` returns the whole page. Pass `question` and the page is chunked, its passages are scored against the query by [Reranker](https://jina.ai/reranker) v3.5, and only the highest-scoring ones are returned.
 
 | Parameter | Default | Effect |
 |---|---|---|
 | `question` | *(unset)* | Unset returns the full page. Set returns passages instead of `content`. |
-| `chunk_size` | `100` | Target passage size in words, split at sentence boundaries, so a target rather than a hard cut. Comparable across scripts. 1-4096. |
+| `chunk_size` | `100` | Target passage size in words, split at sentence boundaries, so a target, not a hard cut. Counted in words in every script. 1-4096. |
 | `topk` | `1` | Passages to keep, best first. 1-50. |
 
-`question` gates the other two, so a call without it is byte-for-byte a plain read.
+`question` gates the other two. Without it the response is unchanged from a plain read.
 
 ```jsonc
 // full page: 70,022 bytes
@@ -311,19 +311,19 @@ Verified working: React references (`useState`, `useEffect`), Stack Overflow, Py
 
 Reproduced failure modes. The response does not flag any of these:
 
-- **Positional questions fail.** "Latest" is a position, not a meaning. `raw.githubusercontent.com/vitejs/vite/main/packages/vite/CHANGELOG.md` (283,749 bytes) opens with `## [8.3.0] ... (2026-09-10)`; asked for the latest released version it returned `6.0.0 (2024-11-26)` from byte 228,321. Read the first screen for latest, first, current.
+- **Positional questions fail.** Ranking matches text, not document order. `raw.githubusercontent.com/vitejs/vite/main/packages/vite/CHANGELOG.md` (283,749 bytes) opens with `## [8.3.0] ... (2026-09-10)`; asked for the latest released version it returned `6.0.0 (2024-11-26)` from byte 228,321. Read the first screen for latest, first, current.
 - **Inline code loses tokens.** `curl -fsSL https://bun.sh/install | bash` came back as `curl -fsSL | bash`. React JSX came back as `{show && }`, component tags gone. Do not run a command or identifier taken from a passage without checking the source.
 - **One question per call.** `北京的人口和面积是多少` returned population and not area. A two-part `os.path` question returned the `join` rule and cut `splitext` at "into a pair `(root, ext)` such that".
-- **Tables and boilerplate are not filtered.** The GDP table came through intact (Japan $4,379,253M) with the Wikipedia footer attached: `Privacy policy * About Wikipedia * Disclaimers * Cookie statement`. [read.ts](src/utils/read.ts) says the chunker strips code blocks, tables and nav furniture before splitting. It does not.
-- **Confident wrong is indistinguishable from right.** Ask the Golden Gate Bridge article for Japan's GDP and the top passage is footnotes about *US* GDP, cited to 2023.
-- **Blocked pages read as content.** `x.com/jina_ai` returned `@jina_ai hasn't posted` with `snippet_source: content`, not an error.
+- **Tables and page furniture are not filtered.** The GDP table came through intact (Japan $4,379,253M) with the Wikipedia footer attached: `Privacy policy * About Wikipedia * Disclaimers * Cookie statement`. [read.ts](src/utils/read.ts) says the chunker strips code blocks, tables and nav furniture before splitting. It does not.
+- **A wrong answer carries no warning.** Ask the Golden Gate Bridge article for Japan's GDP and the top passage is footnotes about US GDP, cited to 2023.
+- **Blocked pages return their login wall as content.** `x.com/jina_ai` returned `@jina_ai hasn't posted` with `snippet_source: content`, not an error.
 - **`chunk_size` is not monotonic.** 50 gave focused passages that lost nothing; 400 opened off-topic (`But the relationship is closer than that.`) and ended mid-word. Use 40-70 for commands, signatures and numbers, 150-200 for explanation.
 
 A question-grounded read gets a 60s budget against 30s for a plain read, because chunking and reranking run after the fetch. `parallel_read_url` raises its floor to 60s when any entry carries a `question`.
 
 ### Reading a scanned document or a PDF
 
-A plain read parses HTML. It returns nothing useful when the text is not in the markup — scanned pages, image-only PDFs — and flattens formulas and table structure otherwise. Pass `ocr` and the rendered page goes through [jina-ocr-v1](https://jina.ai/models/jina-ocr-v1) as an image, returning Markdown with formulas and tables intact.
+A plain read parses HTML. It returns nothing useful when the text is not in the markup (scanned pages, image-only PDFs), and flattens formulas and table structure otherwise. Pass `ocr` and the rendered page goes through [jina-ocr-v1](https://jina.ai/models/jina-ocr-v1) as an image, returning Markdown with formulas and tables intact.
 
 ```jsonc
 { "url": "https://arxiv.org/pdf/2609.03181", "ocr": true }            // page 1
@@ -357,9 +357,9 @@ Removed in v1.10.0. Use `search_web`, then `read_url` on the pages you picked:
 ] }
 ```
 
-Two calls instead of one. The caller chooses the pages, which is the point: `search_web_deep` chose them, and that is the failure it could not be documented around. Measured on `latest stable vite version`, where the npm result carries `Latest version: 8.3.0` — `search_web` returned that result in 2 of 5 on both runs; the deep path returned it 1 of 5 and then 0 of 5 with `v4.vite.dev/releases` ranked first, and `snippet_source=content` dropped the npm page outright. Three identical calls gave three different result sets. Passage output ran 3-4x the bytes of `search_web` per result (348-682 against 138-191), and the score it returned placed a page stating no version (0.4765) above the page holding the right one (0.1303).
+Two calls instead of one, and the caller picks the pages. That is the reason for the removal: `search_web_deep` picked them, and picked wrong. Measured on `latest stable vite version`, where the npm result carries `Latest version: 8.3.0` — `search_web` returned that result in 2 of 5 on both runs; the deep path returned it 1 of 5 and then 0 of 5 with `v4.vite.dev/releases` ranked first, and `snippet_source=content` dropped the npm page outright. Three identical calls returned three different result sets. Output ran 3-4x the bytes of `search_web` per result (348-682 against 138-191). Its `rerank_score` placed a page stating no version (0.4765) above the page holding the correct one (0.1303).
 
-The pipeline behind it is unchanged and still exposed: `read_url` with `question` runs the same chunk-and-rerank against a page you chose. Its limits, including why positional questions like "latest" come back wrong, are in [Reading a page with a question in mind](#reading-a-page-with-a-question-in-mind).
+The pipeline is still available: `read_url` with `question` runs the same chunk-and-rerank on a page you chose. Its limits are listed in [Reading a page with a question in mind](#reading-a-page-with-a-question-in-mind).
 
 ## Developer Guide
 
