@@ -300,37 +300,37 @@ This filters at the proxy level before tools reach the client. Server-side filte
 `question` gates the other two. Without it the response is unchanged from a plain read.
 
 ```jsonc
-// full page: 70,022 bytes
+// full page: 69,530 bytes
 { "url": "https://www.paulgraham.com/greatwork.html" }
 
-// passages: ~900 bytes
+// passages: 1,195 bytes
 { "url": "https://www.paulgraham.com/greatwork.html",
   "question": "Why are new ideas hard to see?", "topk": 3, "chunk_size": 50 }
 ```
 
-Response shape: `question`, `snippets`, `snippet_source: content`, no `content`. `snippets` is always a one-element array: `topk` passages arrive joined by ` … ` inside that element. There is no per-passage score, so relevance cannot be thresholded here.
+Response shape: `question`, `snippets`, `snippet_source: content`, no `content`. `snippets` is one element holding up to `topk` passages joined by ` … `. No score is returned, so relevance cannot be thresholded here. Ladder measured at `chunk_size=40`: `topk` 1 gives 433 bytes and no separator, 2 gives 699 bytes and one separator, 5 gives 1,537 bytes and one separator. Fewer than `topk` passages can come back.
 
 If extraction cannot run — empty page, unreadable page, no API key to rank with — the full body comes back with `snippet_source: full_content` and a `note`.
 
-Byte cost, plain read vs `question`:
+Byte cost, same URL, same endpoint, bytes of returned text:
 
-Full body from `wc -c` against `r.jina.ai`; passage column estimated from the returned payload, not server-metered:
+| page | plain read | with `question` |
 |---|---|---|
-| docs.python.org/3/library/functions.html | 121,069 | ~1,100 |
-| en.wikipedia.org/wiki/List_of_countries_by_GDP_(nominal) | 201,697 | ~1,700 |
-| paulgraham.com/greatwork.html | 70,022 | ~900 |
+| docs.python.org/3/library/functions.html | 83,786 | 874 |
+| en.wikipedia.org/wiki/List_of_countries_by_GDP_(nominal) | 12,295 | 912 |
+| paulgraham.com/greatwork.html | 69,530 | 1,195 |
 
-Verified working: React references (`useState`, `useEffect`), Stack Overflow, Python docs, essays, GitHub READMEs, arXiv PDFs, and a client-rendered price page (Coinbase returned the live figure).
+Measured against a local `wrangler dev` of this repo with an API key. `r.jina.ai` returns different sizes for the same URL, so do not mix the two sets.
+
+Verified on this build: Python docs, Chinese Wikipedia, React references, GitHub READMEs, arXiv PDFs, essays. Compound questions worked here too (the os.path query returned both the `join` rule and the `splitext` example, and Beijing returned both population and area), so ask one thing per call as a habit, not because every multi-part question fails.
 
 Reproduced failure modes. The response does not flag any of these:
 
-- **Positional questions fail.** Ranking matches text, not document order. `raw.githubusercontent.com/vitejs/vite/main/packages/vite/CHANGELOG.md` (283,749 bytes) opens with `## [8.3.0] ... (2026-09-10)`; asked for the latest released version it returned `6.0.0 (2024-11-26)` from byte 228,321. Read the first screen for latest, first, current.
-- **Inline code loses tokens.** `curl -fsSL https://bun.sh/install | bash` came back as `curl -fsSL | bash`. React JSX came back as `{show && }`, component tags gone. Do not run a command or identifier taken from a passage without checking the source.
-- **One question per call.** `北京的人口和面积是多少` returned population and not area. A two-part `os.path` question returned the `join` rule and cut `splitext` at "into a pair `(root, ext)` such that".
-- **Tables and page furniture are not filtered.** The GDP table came through intact (Japan $4,379,253M) with the Wikipedia footer attached: `Privacy policy * About Wikipedia * Disclaimers * Cookie statement`. [read.ts](src/utils/read.ts) says the chunker strips code blocks, tables and nav furniture before splitting. It does not.
-- **A wrong answer carries no warning.** Ask the Golden Gate Bridge article for Japan's GDP and the top passage is footnotes about US GDP, cited to 2023.
-- **Blocked pages return their login wall as content.** `x.com/jina_ai` returned `@jina_ai hasn't posted` with `snippet_source: content`, not an error.
-- **`chunk_size` is not monotonic.** 50 gave focused passages that lost nothing; 400 opened off-topic (`But the relationship is closer than that.`) and ended mid-word. Use 40-70 for commands, signatures and numbers, 150-200 for explanation.
+- **Positional questions fail.** Ranking matches text, not document order. `raw.githubusercontent.com/vitejs/vite/main/packages/vite/CHANGELOG.md` is 283,749 bytes and opens with `## [8.3.0] ... (2026-09-10)`. Asked for the latest released version, it returned 1,008 bytes containing `6.0.0` and no `8.3.0` at all. Read the first screen for latest, first, current.
+- **Tables, fenced code and page furniture are removed before ranking.** [read.ts](src/utils/read.ts) says so and it holds: the GDP list page is 12,295 bytes through `read_url` and contains `Japan` but not `4,379,253`. Asked for Japan's figure, `question` returned the map colour legend, `$1–5 trillion $750 billion – $1 trillion …`. A number that lives in a table is not reachable this way.
+- **Inline code loses tokens.** `curl -fsSL https://bun.sh/install | bash` came back as `curl -fsSL | bash`. Never run a command copied out of a passage without checking the source.
+- **Blocked pages return their login wall as content.** `x.com/jina_ai` returned 315 bytes of `Log inSign up … hasn't posted` with `snippet_source: content` and no error.
+- **`chunk_size` is not monotonic.** 50 returned 521 bytes opening on the answer (`And yet empirically having new ideas is hard.`); 400 returned 2,260 bytes opening off-topic (`But the relationship is closer than that.`). Use 40-70 for commands, signatures and numbers, 150-200 for explanation.
 
 A question-grounded read gets a 60s budget against 30s for a plain read, because chunking and reranking run after the fetch. The same 60s applies to a URL array carrying a `question`.
 
@@ -350,6 +350,8 @@ A plain read parses HTML. It returns nothing useful when the text is not in the 
 | plain read | 49,466 (whole PDF) | 13,864 |
 | `ocr: true` | 2,963 (page 1) | 61,520 |
 | `ocr: true, page: 2` | 2,749 (page 2) | 62,720 |
+
+Re-measured on a local `wrangler dev`: 49,745 / 2,968 / 2,923 bytes. Within 1 percent of the published figures.
 
 Off by default, because OCR bills more tokens per page than a plain read costs per document. Turn it on when the HTML path fails or the layout matters. `page` is shared across a URL array, so several pages of one document take one call each.
 

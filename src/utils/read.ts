@@ -83,11 +83,12 @@ export type ReadUrlResponse = ReadUrlResult | ReadUrlError;
  * Delegates to svip.jina.ai's `url` + `q` form rather than chunking and ranking
  * here, which keeps the chunker and the reranker call off the Worker's CPU.
  *
- * NOTE: an earlier version of this comment claimed the server chunker strips code
- * blocks, tables and nav furniture before splitting. Measured, it does not:
- * markdown tables, inline code and site footers all appear in returned passages.
- * Do not write callers that assume a passage excludes code, and keep the README's
- * warning about verifying commands and identifiers against the source.
+ * Stripping is real and worth knowing: measured against a local wrangler dev, the
+ * Wikipedia GDP list comes back as passages that contain the country name but not
+ * the figures, because the table is gone before ranking, and the same removal takes
+ * fenced code and site furniture with it. The consequence for callers is that a
+ * number or a command that lives in a table or a code block is not reachable by
+ * `question`; those need a plain read.
  *
  * Only ever called with BOTH a url and a non-empty question. svip's read path
  * is keyed on that pair: a url with no `q` there is a search for the literal

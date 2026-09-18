@@ -162,3 +162,7 @@ wrangler.toml.bak
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# wrangler local secrets (Cloudflare default template ignores this; this repo did not)
+.dev.vars
+.dev.vars.*
