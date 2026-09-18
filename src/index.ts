@@ -9,21 +9,18 @@ const SERVER_NAME = "jina-mcp";
 
 // Tool tags mapping for filtering
 const TOOL_TAGS: Record<string, string[]> = {
-	search: ["search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog", "search_bibtex"],
-	parallel: ["parallel_search_web", "parallel_search_arxiv", "parallel_search_ssrn", "parallel_read_url"],
-	read: ["read_url", "parallel_read_url", "capture_screenshot_url"],
-	utility: ["primer", "show_api_key", "expand_query", "guess_datetime_url", "extract_pdf"],
-	rerank: ["sort_by_relevance", "classify_text", "deduplicate_strings", "deduplicate_images"],
+	search: ["search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog"],
+	read: ["read_url", "capture_screenshot_url"],
+	utility: ["primer", "guess_datetime_url", "extract_pdf"],
+	rerank: ["sort_by_relevance", "deduplicate_strings"],
 };
 
 // All available tools
 const ALL_TOOLS = [
-	"primer", "show_api_key", "read_url", "capture_screenshot_url", "guess_datetime_url",
-	"search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog", "search_bibtex", "expand_query",
-	"parallel_search_web", "parallel_search_arxiv", "parallel_search_ssrn", "parallel_read_url",
-	"sort_by_relevance", "classify_text", "deduplicate_strings", "deduplicate_images", "extract_pdf"
+	"primer", "read_url", "capture_screenshot_url", "guess_datetime_url",
+	"search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog",
+	"sort_by_relevance", "deduplicate_strings", "extract_pdf"
 ];
-
 // Parse tool filter from query parameters
 function parseToolFilter(url: URL): Set<string> | null {
 	const includeTools = url.searchParams.get("include_tools");
@@ -96,10 +93,10 @@ const SERVER_INSTRUCTIONS = `Web access: search the live web, read URLs, search 
 Use for anything online - current events, a URL the user pasted, a claim needing a source. Not for local files, code execution, or databases.
 
 Picking a tool:
-- search_web returns titles, URLs and engine snippets. For page-level passages, pass \`question\` to read_url or parallel_read_url on the results you chose. A snippet is not a source for exact values: verify version numbers, commands and error strings against the page.
+- search_web returns titles, URLs and engine snippets. For page-level passages, pass \`question\` to read_url on the results you chose. A snippet is not a source for exact values: verify version numbers, commands and error strings against the page.
 - read_url fetches one page as markdown. Pass its \`question\` to get only the answering passages instead of the whole body; this is much cheaper than reading a full page into context.
-- Prefer the parallel_* variants over repeated single calls.
-- search_arxiv for preprints, search_ssrn for social science and finance, search_bibtex for citations, search_jina_blog for Jina's own models and releases.
+- \`search_web\`, \`search_arxiv\`, \`search_ssrn\` and \`read_url\` accept an array on \`query\`/\`url\`; pass an array to run them concurrently instead of repeating single calls.
+- search_arxiv for preprints, search_ssrn for social science and finance, search_jina_blog for Jina's own models and releases.
 - primer supplies the current time and user location; call it before answering anything time- or location-dependent.`;
 
 // Create the MCP server instance with request-scoped props
@@ -274,39 +271,31 @@ export default {
 					parameters: {
 						exclude_tools: "Comma-separated tool names to exclude (e.g., search_web,search_arxiv)",
 						include_tools: "Comma-separated tool names to include",
-						exclude_tags: "Comma-separated tags to exclude (e.g., parallel,search)",
+						exclude_tags: "Comma-separated tags to exclude (e.g., search,read)",
 						include_tags: "Comma-separated tags to include",
-						max_tokens: "Cap the size of read_url/parallel_read_url responses in tokens (0 disables truncation)"
+						max_tokens: "Cap the size of read_url responses in tokens (0 disables truncation)"
 					},
 					tags: TOOL_TAGS,
 					examples: [
-						"/v1?exclude_tags=parallel - Exclude all parallel_* tools",
+						"/v1?exclude_tags=search - Exclude all search tools",
 						"/v1?include_tags=search,read - Only include search and read tools",
-						"/v1?exclude_tools=search_images,deduplicate_images - Exclude specific tools"
+						"/v1?exclude_tools=search_ssrn,search_images - Exclude specific tools"
 					],
 					precedence: "exclude_tools > exclude_tags > include_tools > include_tags"
 				},
 				tools: [
-					"primer - Provide timezone-aware timestamps, user location, network details, and client context",
-					"read_url - Extract clean content from web pages",
-					"capture_screenshot_url - Capture high-quality screenshots of web pages",
-					"guess_datetime_url - Analyze web pages for last update/publish datetime",
-					"search_web - Search the web for current information",
-					"search_arxiv - Search academic papers on arXiv",
-					"search_ssrn - Search academic papers on SSRN (Social Science Research Network)",
-					"search_images - Search for images across the web (similar to Google Images)",
-					"search_jina_blog - Search Jina AI news at jina.ai/news for articles, tutorials, and announcements",
-					"search_bibtex - Search for academic papers and return BibTeX citations (DBLP + Semantic Scholar)",
-					"expand_query - Expand and rewrite search queries based on the query expansion model",
-					"parallel_read_url - Read multiple web pages in parallel for content extraction",
-					"parallel_search_web - Run multiple web searches in parallel for topic coverage and diverse perspectives",
-					"parallel_search_arxiv - Run multiple arXiv searches in parallel for research coverage and diverse academic angles",
-					"parallel_search_ssrn - Run multiple SSRN searches in parallel for social science research coverage",
+					"primer - Current time, user timezone, location and client context",
+					"read_url - Read a web page or PDF as markdown; pass question for passages instead of the full body",
+					"capture_screenshot_url - Capture a screenshot of a web page",
+					"guess_datetime_url - Guess a page publish or last-update datetime with a confidence score",
+					"search_web - Search the web; returns titles, URLs and engine snippets; query accepts an array",
+					"search_arxiv - Search arXiv preprints; query accepts an array",
+					"search_ssrn - Search SSRN working papers; query accepts an array",
+					"search_images - Search the web for images",
+					"search_jina_blog - Search Jina AI news at jina.ai/news",
 					"sort_by_relevance - Rerank documents by relevance to a query",
-					"classify_text - Classify texts into user-defined labels",
-					"deduplicate_strings - Get top-k semantically unique strings",
-					"deduplicate_images - Get top-k semantically unique images",
-					"extract_pdf - Extract figures, tables, and equations from PDF documents"
+					"deduplicate_strings - Select top-k semantically distinct strings",
+					"extract_pdf - Extract figures, tables and equations from a PDF"
 				]
 			};
 
