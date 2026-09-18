@@ -299,9 +299,9 @@ Response shape: `question`, `snippets`, `snippet_source: content`, no `content`.
 
 If extraction cannot run — empty page, unreadable page, no API key to rank with — the full body comes back with `snippet_source: full_content` and a `note`.
 
-Byte cost, plain read vs `question`. Full body measured against `r.jina.ai`:
+Byte cost, plain read vs `question`:
 
-| page | full body | with `question` |
+Full body from `wc -c` against `r.jina.ai`; passage column estimated from the returned payload, not server-metered:
 |---|---|---|
 | docs.python.org/3/library/functions.html | 121,069 | ~1,100 |
 | en.wikipedia.org/wiki/List_of_countries_by_GDP_(nominal) | 201,697 | ~1,700 |
@@ -357,7 +357,7 @@ Removed in v1.10.0. Use `search_web`, then `read_url` on the pages you picked:
 ] }
 ```
 
-Two calls instead of one, and the caller picks the pages. That is the reason for the removal: `search_web_deep` picked them, and picked wrong. Measured on `latest stable vite version`, where the npm result carries `Latest version: 8.3.0` — `search_web` returned that result in 2 of 5 on both runs; the deep path returned it 1 of 5 and then 0 of 5 with `v4.vite.dev/releases` ranked first, and `snippet_source=content` dropped the npm page outright. Three identical calls returned three different result sets. Output ran 3-4x the bytes of `search_web` per result (348-682 against 138-191). Its `rerank_score` placed a page stating no version (0.4765) above the page holding the correct one (0.1303).
+Two calls instead of one, and the caller picks the pages. That is the reason for the removal: `search_web_deep` picked them, and picked wrong. Measured on `latest stable vite version`, where the npm result carries `Latest version: 8.3.0` — `search_web` returned that result in 2 of 5 on both runs; the deep path returned it 1 of 5 and then 0 of 5 with `v4.vite.dev/releases` ranked first, and `snippet_source=content` dropped the npm page outright. Three identical calls returned three different result sets. Output ran 3-4x the bytes of `search_web` per result (348-682 against 138-191). Its `rerank_score` ranked relevance, not correctness: at `num=2` the npm result carrying `8.3.0` scored 0.1303, below a page stating no version at 0.4765.
 
 The pipeline is still available: `read_url` with `question` runs the same chunk-and-rerank on a page you chose. Its limits are listed in [Reading a page with a question in mind](#reading-a-page-with-a-question-in-mind).
 
