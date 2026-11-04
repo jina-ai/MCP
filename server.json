@@ -1,0 +1,37 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.jina-ai/mcp",
+  "title": "Jina AI MCP Server",
+  "description": "Remote MCP server providing web reading, search, screenshots, embeddings, reranking, and PDF extraction via Jina AI APIs.",
+  "repository": {
+    "url": "https://github.com/jina-ai/MCP",
+    "source": "github"
+  },
+  "version": "1.4.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.jina.ai/v1",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer token for Jina AI API authentication (e.g. 'Bearer jina_xxx'). Optional for some tools, required for search and advanced features.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    },
+    {
+      "type": "sse",
+      "url": "https://mcp.jina.ai/sse",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer token for Jina AI API authentication (e.g. 'Bearer jina_xxx'). Optional for some tools, required for search and advanced features.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
