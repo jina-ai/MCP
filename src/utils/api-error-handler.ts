@@ -36,7 +36,7 @@ async function readErrorDetail(response: Response): Promise<{ text: string; from
 const AUTH_FAILED_MESSAGE = "Authentication failed. Please set your API key in the Jina AI MCP settings. You can get a free API key by visiting https://jina.ai and signing up for an account.";
 const OUT_OF_QUOTA_MESSAGE = "This key is out of quota. Please top up this key at https://jina.ai";
 const RATE_LIMITED_MESSAGE = "Rate limit exceeded. Please upgrade your API key to get higher rate limits. Visit https://jina.ai to manage your subscription and increase your usage limits.";
-const SVIP_AT_CAPACITY_MESSAGE = "The search service is temporarily at capacity. This is not a limit on your API key, so upgrading it will not help; retry in a few seconds.";
+const SVIP_AT_CAPACITY_MESSAGE = "The search service is temporarily at capacity. This is not a limit on your API key, so upgrading it will not help.";
 
 /** Statuses about the caller's key rather than the request, answered with a fixed message */
 const ACCOUNT_ERROR_MESSAGES: Record<number, string> = {
@@ -44,6 +44,26 @@ const ACCOUNT_ERROR_MESSAGES: Record<number, string> = {
 	402: OUT_OF_QUOTA_MESSAGE,
 	429: RATE_LIMITED_MESSAGE,
 };
+
+/**
+ * When the service said to come back, for the statuses where waiting helps.
+ *
+ * Retry-After was read by nothing, so a model told "rate limited" or "at
+ * capacity" had no way to know whether to try again in a second or a minute
+ * and usually tried at once.
+ */
+function retryHint(response: Response): string {
+	if (response.status !== 429 && response.status !== 503) return "";
+
+	const header = response.headers.get("retry-after");
+	if (!header) return "";
+
+	const asSeconds = Number(header);
+	const wait = Number.isFinite(asSeconds) ? asSeconds : (Date.parse(header) - Date.now()) / 1000;
+	if (!Number.isFinite(wait) || wait <= 0) return "";
+
+	return ` Retry after ${Math.ceil(wait)}s.`;
+}
 
 /**
  * Whether the response came from svip.jina.ai (search, question reads,
@@ -82,15 +102,18 @@ function isFromSvip(response: Response): boolean {
 export async function describeApiError(response: Response): Promise<string> {
 	const detail = await readErrorDetail(response);
 	const reason = detail.fromApi ? ` Reason given: ${detail.text}` : "";
+	const retry = retryHint(response);
 
 	if (response.status === 429 && isFromSvip(response)) {
-		return `${SVIP_AT_CAPACITY_MESSAGE}${reason}`;
+		return `${SVIP_AT_CAPACITY_MESSAGE}${retry || " Retry in a few seconds."}${reason}`;
 	}
 
 	const accountError = ACCOUNT_ERROR_MESSAGES[response.status];
-	if (accountError) return `${accountError}${reason}`;
+	if (accountError) return `${accountError}${retry}${reason}`;
 
-	return `${response.status} ${response.statusText}${detail.text ? ` - ${detail.text}` : ""}`;
+	const statusLine = `${response.status} ${response.statusText}${detail.text ? ` - ${detail.text}` : ""}`;
+	// The detail may or may not end its own sentence.
+	return retry ? `${statusLine.replace(/[.\s]+$/, "")}.${retry}` : statusLine;
 }
 
 /**
