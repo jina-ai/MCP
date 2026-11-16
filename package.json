@@ -1,6 +1,6 @@
 {
 	"name": "jina-mcp",
-	"version": "1.10.0",
+	"version": "1.11.0",
 	"private": true,
 	"scripts": {
 		"deploy": "wrangler deploy",
@@ -9,7 +9,8 @@
 		"lint:fix": "biome lint --fix",
 		"start": "wrangler dev",
 		"cf-typegen": "wrangler types",
-		"type-check": "tsc --noEmit"
+		"type-check": "tsc --noEmit",
+		"test": "esbuild test/*.test.ts --bundle --platform=node --format=cjs --out-extension:.js=.cjs --outdir=.test-build --log-level=warning && node --test .test-build/*.test.cjs"
 	},
 	"dependencies": {
 		"@modelcontextprotocol/sdk": "^1.24.3",

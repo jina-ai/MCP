@@ -2,10 +2,14 @@ import { createMcpHandler } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerJinaTools } from "./tools/jina-tools.js";
 import { stringify as yamlStringify } from "yaml";
+import packageJson from "../package.json";
+import { describeLimits } from "./utils/limits.js";
 
-// Build-time constants (can be replaced by build tools)
-const SERVER_VERSION = "1.9.0";
-const SERVER_NAME = "jina-mcp";
+// Read from package.json rather than repeated here. The copy that used to
+// live in this file said 1.9.0 through the whole of 1.10.0, so the `/` page
+// and the MCP handshake both reported a version that was not the one running.
+const SERVER_VERSION: string = packageJson.version;
+const SERVER_NAME: string = packageJson.name;
 
 // Tool tags mapping for filtering
 const TOOL_TAGS: Record<string, string[]> = {
@@ -282,6 +286,18 @@ export default {
 						"/v1?exclude_tools=search_ssrn,search_images - Exclude specific tools"
 					],
 					precedence: "exclude_tools > exclude_tags > include_tools > include_tags"
+				},
+				api_key: {
+					not_needed: "primer, read_url, capture_screenshot_url, guess_datetime_url, search_jina_blog",
+					needed: "search_web, search_arxiv, search_ssrn, search_images, sort_by_relevance, deduplicate_strings, extract_pdf, and read_url with a question (without a key it returns the full page)"
+				},
+				// Printed from the constants the tools use, so this cannot go stale.
+				time_limits: describeLimits(),
+				errors: {
+					reporting: "A failed call has isError: true and says why in plain text. A call with several queries or URLs is an error only if all of them failed; otherwise each failure is reported next to the results that did come back.",
+					key_rejected: "The message carries the reason the API gave, e.g. an unknown key or a key that billing refused.",
+					busy: "When a service is rate limited or out of capacity the message says so, says whether it is about your key, and gives the wait the service asked for if it named one.",
+					read_url_fallback: "With a question, read_url returns passages (snippet_source: content). If none could be ranked it returns the whole page instead, marked snippet_source: full_content with a note."
 				},
 				tools: [
 					"primer - Current time, user timezone, location and client context",

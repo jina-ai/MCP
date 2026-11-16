@@ -166,3 +166,6 @@ vite.config.ts.timestamp-*
 # wrangler local secrets (Cloudflare default template ignores this; this repo did not)
 .dev.vars
 .dev.vars.*
+
+# Bundled tests (npm test)
+.test-build

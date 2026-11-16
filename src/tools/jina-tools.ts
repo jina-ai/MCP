@@ -6,6 +6,17 @@ import { downloadImages } from "../utils/image-downloader.js";
 import { lazyGreedySelection, lazyGreedySelectionWithSaturation } from "../utils/submodular-optimization.js";
 import { applyTokenGuardrail } from "../utils/token-guardrail.js";
 import {
+	EMBEDDINGS_TIMEOUT_MS,
+	EXTRACT_PDF_TIMEOUT_MS,
+	MAX_BATCH_SIZE,
+	PARALLEL_SEARCH_TIMEOUT_MS,
+	PLAIN_READ_TIMEOUT_MS,
+	QUESTION_READ_TIMEOUT_MS,
+	RERANK_TIMEOUT_MS,
+	SCREENSHOT_DOWNLOAD_TIMEOUT_MS,
+	SCREENSHOT_TIMEOUT_MS,
+} from "../utils/limits.js";
+import {
 	executeParallelSearches,
 	executeWebSearch,
 	executeArxivSearch,
@@ -39,14 +50,6 @@ function sniffBase64ImageMimeType(base64: string): string {
 	return 'image/jpeg';
 }
 
-const SCREENSHOT_TIMEOUT_MS = 60000;
-const SCREENSHOT_DOWNLOAD_TIMEOUT_MS = 20000;
-// These calls had no deadline, so a hung upstream held the invocation open.
-// Measured: rerank over 1024 documents 1.5s, 1000 embeddings ~1s, extract_pdf
-// 12-16s on three arXiv papers.
-const RERANK_TIMEOUT_MS = 30000;
-const EMBEDDINGS_TIMEOUT_MS = 30000;
-const EXTRACT_PDF_TIMEOUT_MS = 90000;
 
 /**
  * Decode one base64 embedding (little-endian float32, as the API sends it).
@@ -92,7 +95,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 				: { content: formatSingleSearchResultToContentItems(result) };
 		}
 
-		const results = await executeParallelSearches([...new Set(query)].map(toArgs), search, { timeout: 30000 });
+		const results = await executeParallelSearches([...new Set(query)].map(toArgs), search, { timeout: PARALLEL_SEARCH_TIMEOUT_MS });
 		const content = formatParallelSearchResultsToContentItems(results);
 		return results.every((result) => 'error' in result) ? { content, isError: true } : { content };
 	};
@@ -244,7 +247,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"read_url",
 			"Fetch a URL (page or PDF) as clean markdown. Pass `question` to get only the passages answering it instead of the whole page - far cheaper than reading the full body into context.",
 			{
-				url: z.union([z.string().url(), z.array(z.string().url()).min(1).max(5)]).describe("Page or PDF URL, or up to 5 URLs to read in parallel."),
+				url: z.union([z.string().url(), z.array(z.string().url()).min(1).max(MAX_BATCH_SIZE)]).describe("Page or PDF URL, or up to 5 URLs to read in parallel."),
 				withAllLinks: z.boolean().optional().describe("Also return every link on the page."),
 				withAllImages: z.boolean().optional().describe("Also return every image on the page."),
 				question: z.string().optional().describe("Return only the passages answering this question, instead of the full body. Omit for the whole page."),
@@ -257,11 +260,10 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 				try {
 					const props = getProps();
 
-					// A question-grounded read is two steps: passages from svip (up to
-					// 25s) and, if that yields nothing, the full page (up to 30s). Both
-					// have to fit, so it gets more than the plain read budget. The two
-					// figures are set in utils/read.ts.
-					const readTimeout = question ? 60000 : 30000;
+					// A question-grounded read is two steps: passages from svip and, if
+					// that yields nothing, the full page. Both have to fit, so it gets
+					// more than the plain read budget; utils/limits.ts has the figures.
+					const readTimeout = question ? QUESTION_READ_TIMEOUT_MS : PLAIN_READ_TIMEOUT_MS;
 
 					// Handle single URL or single-element array
 					if (typeof url === 'string' || (Array.isArray(url) && url.length === 1)) {
@@ -335,7 +337,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"search_web",
 			"Search the web. Returns titles, URLs and search-engine snippets.",
 			{
-				query: z.union([z.string(), z.array(z.string()).min(1).max(5)]),
+				query: z.union([z.string(), z.array(z.string()).min(1).max(MAX_BATCH_SIZE)]),
 				num: z.number().int().min(1).max(10).default(10),
 				tbs: z.string().optional().describe("Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year)."),
 				location: z.string().optional(),
@@ -366,7 +368,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"search_arxiv",
 			"Search arXiv preprints (physics, maths, CS, quantitative biology and finance).",
 			{
-				query: z.union([z.string(), z.array(z.string()).min(1).max(5)]),
+				query: z.union([z.string(), z.array(z.string()).min(1).max(MAX_BATCH_SIZE)]),
 				num: z.number().int().min(1).max(10).default(10),
 				tbs: z.string().optional().describe("Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year).")
 			},
@@ -393,7 +395,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"search_ssrn",
 			"Search SSRN working papers (social science, economics, law, finance, management).",
 			{
-				query: z.union([z.string(), z.array(z.string()).min(1).max(5)]),
+				query: z.union([z.string(), z.array(z.string()).min(1).max(MAX_BATCH_SIZE)]),
 				num: z.number().int().min(1).max(10).default(10),
 				tbs: z.string().optional().describe("Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year).")
 			},
@@ -420,7 +422,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"search_jina_blog",
 			"Search Jina AI's news and blog at jina.ai/news: product announcements, model releases, technical write-ups.",
 			{
-				query: z.union([z.string(), z.array(z.string()).min(1).max(5)]),
+				query: z.union([z.string(), z.array(z.string()).min(1).max(MAX_BATCH_SIZE)]),
 				num: z.number().int().min(1).max(100).default(30),
 				tbs: z.string().optional().describe("Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year).")
 			},
@@ -731,7 +733,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"Extract figures, tables and equations from a PDF as images, by arXiv id or URL.",
 			{
 				id: z.string().optional().describe("arXiv id, e.g. '2301.12345'. Give id or url."),
-				url: z.string().url().optional().describe("PDF URL. Give id or url."),
+				url: z.string().url().optional().describe("PDF URL on arxiv.org, ssrn.com, openreview.net or aclanthology.org; other hosts are refused. Give id or url."),
 				max_edge: z.number().default(1024).describe("Longest image edge in pixels, default 1024."),
 				type: z.string().optional().describe("Comma-separated types to keep: figure, table, equation. Default all.")
 			},

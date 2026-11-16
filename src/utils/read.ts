@@ -1,26 +1,5 @@
 import { withDeadline } from "./timeout.js";
-
-// r.jina.ai had no client-side deadline: a hung read held the Worker invocation
-// open until the platform killed it, taking the sibling reads down with it.
-const READ_REQUEST_TIMEOUT_MS = 30000;
-
-/**
- * What svip may spend on a question-grounded read (fetch, chunk, rerank), sent
- * to it as `deep_timeout`, and how long we wait for its answer.
- *
- * The second has to be the larger. svip's own default budget is 30s and we
- * used to abort at 30s as well, so everything svip does when its budget runs
- * out - answering from what it has - was sent to a connection we were closing
- * at that instant, and svip still charged for it. Now svip gives up first and
- * its answer has 5s to get here.
- *
- * It also has to leave room for the fallback. A question read that svip cannot
- * serve is followed by a full read with its own 30s, and a multi-URL call
- * gives each URL 60s in total (see read_url): 25s + 30s fits, 30s + 30s did
- * not, so the fallback could be cut off just as it finished.
- */
-const PASSAGE_BUDGET_MS = 20000;
-const PASSAGE_REQUEST_TIMEOUT_MS = PASSAGE_BUDGET_MS + 5000;
+import { PASSAGE_BUDGET_MS, PASSAGE_REQUEST_TIMEOUT_MS, READ_REQUEST_TIMEOUT_MS } from "./limits.js";
 
 /** Passage size for question-grounded reads, in words. Counted in words in every script. */
 export const DEFAULT_SNIPPET_CHUNK_SIZE = 100;
@@ -352,7 +331,7 @@ export async function readUrlFromConfig(
 export async function executeParallelUrlReads(
     urlConfigs: ReadUrlConfig[],
     bearerToken?: string,
-    timeout: number = 30000,
+    timeout: number = READ_REQUEST_TIMEOUT_MS,
     clientIp?: string
 ): Promise<ReadUrlResponse[]> {
     // Per-URL deadline. The whole batch used to be raced against one rejecting

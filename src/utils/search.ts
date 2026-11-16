@@ -1,11 +1,12 @@
 import { stringify as yamlStringify } from "yaml";
 import { withDeadline } from "./timeout.js";
 import { describeApiError } from "./api-error-handler.js";
+import { PARALLEL_SEARCH_TIMEOUT_MS, SEARCH_REQUEST_TIMEOUT_MS } from "./limits.js";
 
 // A single search/read had no client-side deadline at all: a hung upstream held
 // the Worker invocation open until the platform killed it. Every outbound call
 // now carries an AbortSignal so the request is actually cancelled, not abandoned.
-const SEARCH_REQUEST_TIMEOUT_MS = 30000;
+// The limits themselves live in limits.ts.
 
 // ============================================================================
 // TYPES AND INTERFACES
@@ -210,9 +211,26 @@ export interface JinaBlogRerankConfig {
 }
 
 let blogPostCache: { fetchedAt: number; posts: IndexedBlogPost[] } | null = null;
-// Concurrent cold requests used to each pull the whole catalog; they now share
-// one in-flight fetch.
-let blogPostCacheInFlight: Promise<IndexedBlogPost[]> | null = null;
+
+/**
+ * The catalog download each tool call has under way, keyed by an object that
+ * belongs to that call.
+ *
+ * This used to be one module-level promise shared by every request in the
+ * isolate. A Worker cannot rely on a promise that another request started: if
+ * that request ends first (its client disconnects, or it times out), the
+ * runtime drops the fetch and the promise never settles. Everything waiting on
+ * it then hung, and since the variable was only cleared when the promise
+ * settled, so did every blog search that isolate served afterwards.
+ *
+ * What is worth sharing between requests is the finished catalog, which
+ * `blogPostCache` holds. What is worth sharing while a download is in the air
+ * is one call's own queries (up to five), and that needs no global.
+ */
+const blogPostFetchByCall = new WeakMap<object, Promise<IndexedBlogPost[]>>();
+
+/** After a failed refresh, how long the stale catalog is served before trying again. */
+const BLOG_RETRY_AFTER_FAILURE_MS = 60 * 1000;
 
 const BLOG_STOPWORDS = new Set([
     'a', 'about', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'can', 'do', 'does',
@@ -251,24 +269,33 @@ function toPublicBlogUrl(post: any): string {
     return url;
 }
 
-/** Fetch and index the full post catalog, memoized per isolate */
-async function fetchIndexedBlogPosts(ghostApiKey: string): Promise<IndexedBlogPost[]> {
+/**
+ * The indexed post catalog: from the per-isolate cache while it is fresh,
+ * otherwise downloaded once per tool call.
+ *
+ * `call` is any object that is the same for all queries of one tool call and
+ * different between calls.
+ */
+async function fetchIndexedBlogPosts(ghostApiKey: string, call: object): Promise<IndexedBlogPost[]> {
     if (blogPostCache && Date.now() - blogPostCache.fetchedAt < BLOG_CACHE_TTL_MS) {
         return blogPostCache.posts;
     }
 
-    // Single-flight: a burst of requests arriving on a cold isolate (or a
-    // parallel_search over N queries, which calls this N times at once) would
-    // otherwise each download the entire post catalog.
-    if (blogPostCacheInFlight) {
-        return blogPostCacheInFlight;
-    }
+    // A search over N queries calls this N times at once; they share one download.
+    const underWay = blogPostFetchByCall.get(call);
+    if (underWay) return underWay;
 
-    blogPostCacheInFlight = fetchAndIndexBlogPosts(ghostApiKey).finally(() => {
-        blogPostCacheInFlight = null;
+    const fetching = fetchAndIndexBlogPosts(ghostApiKey).catch((error) => {
+        // A catalog that is ten minutes old is a better answer than an error.
+        // Serve it, and leave the CMS alone for a minute rather than making
+        // every search in the meantime wait out the same failure first.
+        const stale = blogPostCache;
+        if (!stale) throw error;
+        stale.fetchedAt = Date.now() - BLOG_CACHE_TTL_MS + BLOG_RETRY_AFTER_FAILURE_MS;
+        return stale.posts;
     });
-
-    return blogPostCacheInFlight;
+    blogPostFetchByCall.set(call, fetching);
+    return fetching;
 }
 
 async function fetchAndIndexBlogPosts(ghostApiKey: string): Promise<IndexedBlogPost[]> {
@@ -417,7 +444,9 @@ export async function executeJinaBlogSearch(
     try {
         const limit = Math.min(Math.max(searchArgs.num || 30, 1), 100);
 
-        let posts = await fetchIndexedBlogPosts(ghostApiKey);
+        // The tool handler passes one rerankConfig object to every query of a
+        // call, which makes it the call's identity for sharing the download.
+        let posts = await fetchIndexedBlogPosts(ghostApiKey, rerankConfig ?? searchArgs);
 
         const cutoff = resolveTbsCutoff(searchArgs.tbs);
         if (cutoff !== null) {
@@ -487,7 +516,7 @@ export async function executeParallelSearches<T>(
     searchFunction: (searchArgs: T) => Promise<SearchResultOrError>,
     options: ParallelSearchOptions = {}
 ): Promise<ParallelSearchResult[]> {
-    const { timeout = 30000 } = options;
+    const { timeout = PARALLEL_SEARCH_TIMEOUT_MS } = options;
 
     // Each search gets its own deadline. Previously the whole batch was raced
     // against one rejecting timeout, so a single slow query discarded every
