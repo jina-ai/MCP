@@ -291,7 +291,7 @@ This filters at the proxy level before tools reach the client. Server-side filte
 
 Response shape: `question`, `snippets`, `snippet_source: content`, no `content`. `snippets` is one element holding up to `topk` passages joined by ` … `. No score is returned, so relevance cannot be thresholded here. Ladder measured at `chunk_size=40`: `topk` 1 gives 433 bytes and no separator, 2 gives 699 bytes and one separator, 5 gives 1,537 bytes and one separator. Fewer than `topk` passages can come back.
 
-If extraction cannot run — empty page, unreadable page, no API key to rank with — the full body comes back with `snippet_source: full_content` and a `note`.
+If extraction cannot run — empty page, unreadable page, no API key to rank with, or the ranking call itself failed — the full body comes back with `snippet_source: full_content` and a `note`. `snippet_source: content` therefore always means a ranked passage, never just the top of the page.
 
 Byte cost, same URL, same endpoint, bytes of returned text:
 
@@ -313,7 +313,7 @@ Reproduced failure modes. The response does not flag any of these:
 - **Blocked pages return their login wall as content.** `x.com/jina_ai` returned 315 bytes of `Log inSign up … hasn't posted` with `snippet_source: content` and no error.
 - **`chunk_size` is not monotonic.** 50 returned 521 bytes opening on the answer (`And yet empirically having new ideas is hard.`); 400 returned 2,260 bytes opening off-topic (`But the relationship is closer than that.`). Use 40-70 for commands, signatures and numbers, 150-200 for explanation.
 
-A question-grounded read gets a 60s budget against 30s for a plain read, because chunking and reranking run after the fetch. The same 60s applies to a URL array carrying a `question`.
+A question-grounded read is two steps with their own limits: up to 25s for the passages (the extraction itself is given 20s and 5s to deliver its answer), then, only if that produced nothing, up to 30s for the full page. A plain read gets 30s. In a URL array carrying a `question`, each URL has 60s for both steps together.
 
 ### Reading a scanned document or a PDF
 
