@@ -257,8 +257,10 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 				try {
 					const props = getProps();
 
-					// Chunking and reranking happen after the page has been fetched, so a
-					// question-grounded read needs headroom beyond the plain read budget.
+					// A question-grounded read is two steps: passages from svip (up to
+					// 25s) and, if that yields nothing, the full page (up to 30s). Both
+					// have to fit, so it gets more than the plain read budget. The two
+					// figures are set in utils/read.ts.
 					const readTimeout = question ? 60000 : 30000;
 
 					// Handle single URL or single-element array

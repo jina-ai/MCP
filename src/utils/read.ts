@@ -4,6 +4,24 @@ import { withDeadline } from "./timeout.js";
 // open until the platform killed it, taking the sibling reads down with it.
 const READ_REQUEST_TIMEOUT_MS = 30000;
 
+/**
+ * What svip may spend on a question-grounded read (fetch, chunk, rerank), sent
+ * to it as `deep_timeout`, and how long we wait for its answer.
+ *
+ * The second has to be the larger. svip's own default budget is 30s and we
+ * used to abort at 30s as well, so everything svip does when its budget runs
+ * out - answering from what it has - was sent to a connection we were closing
+ * at that instant, and svip still charged for it. Now svip gives up first and
+ * its answer has 5s to get here.
+ *
+ * It also has to leave room for the fallback. A question read that svip cannot
+ * serve is followed by a full read with its own 30s, and a multi-URL call
+ * gives each URL 60s in total (see read_url): 25s + 30s fits, 30s + 30s did
+ * not, so the fallback could be cut off just as it finished.
+ */
+const PASSAGE_BUDGET_MS = 20000;
+const PASSAGE_REQUEST_TIMEOUT_MS = PASSAGE_BUDGET_MS + 5000;
+
 /** Passage size for question-grounded reads, in words. Counted in words in every script. */
 export const DEFAULT_SNIPPET_CHUNK_SIZE = 100;
 /** Passages returned for question-grounded reads. */
@@ -106,7 +124,7 @@ async function readWithQuestion(
 
     const response = await fetch('https://svip.jina.ai/', {
         method: 'POST',
-        signal: AbortSignal.timeout(READ_REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(PASSAGE_REQUEST_TIMEOUT_MS),
         headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
@@ -117,14 +135,26 @@ async function readWithQuestion(
             url: targetUrl,
             topk: urlConfig.topk ?? DEFAULT_SNIPPET_TOPK,
             chunk_size: urlConfig.chunk_size ?? DEFAULT_SNIPPET_CHUNK_SIZE,
+            deep_timeout: PASSAGE_BUDGET_MS,
         }),
     });
 
     if (!response.ok) return null;
 
-    const data = await response.json() as { results?: Array<{ snippet?: string; title?: string; url?: string; }>; };
+    const data = await response.json() as {
+        results?: Array<{ snippet?: string; title?: string; url?: string; rerank_score?: number; }>;
+    };
     const first = data?.results?.[0];
     if (!first?.snippet) return null;
+
+    // A snippet is only an answer if svip ranked it. When its rerank call fails
+    // or runs out of budget, svip returns the first passage of the page
+    // instead, in the same shape and with the same `snippet_source`; the one
+    // difference is that there is no `rerank_score`. Passing that on told the
+    // model "this is the passage that answers your question" about a page
+    // header. Treat it as no extraction, so the caller falls back to the full
+    // page and says so.
+    if (typeof first.rerank_score !== 'number') return null;
 
     // One url in, so at most one result out; its snippet already joins the top
     // `topk` passages with the separator deep search uses.
