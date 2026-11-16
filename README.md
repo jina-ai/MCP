@@ -74,7 +74,7 @@ For client that does not support remote MCP server yet, you need [`mcp-remote`](
 | `search_jina_blog` | Search Jina AI news and blog posts at [jina.ai/news](https://jina.ai/news) | No |
 | `sort_by_relevance` | Rerank documents by relevance to a query via [Reranker API](https://jina.ai/reranker) | Yes |
 | `deduplicate_strings` | Get top-k semantically unique strings via [Embeddings API](https://jina.ai/embeddings) and [submodular optimization](https://jina.ai/news/submodular-optimization-for-diverse-query-generation-in-deepresearch) | Yes |
-| `extract_pdf` | Extract figures, tables, and equations from PDF documents (arXiv papers or any PDF URL) using layout detection | Yes |
+| `extract_pdf` | Extract figures, tables, and equations from PDF documents using layout detection. Takes an arXiv id, or a PDF URL on arxiv.org, ssrn.com, openreview.net or aclanthology.org | Yes |
 
 > Optional tools work without an API key at [rate limits](https://jina.ai/api-dashboard/rate-limit). Use a key for higher limits. Free keys: [https://jina.ai](https://jina.ai)
 
@@ -209,6 +209,25 @@ alwaysApply: true
 
 When you are uncertain about knowledge, or the user doubts your answer, always use Jina MCP tools to search and read best practices and latest information. Use search_arxiv and read_url together when questions relate to theoretical deep learning or algorithm details. Use search_ssrn for social sciences, economics, law, and finance research. search_web, search_arxiv, and search_ssrn cannot be used alone - always follow with read_url on the result URLs. One read_url call can take up to 5 URLs at once.
 ```
+
+### A tool returned an error. What does it mean?
+
+A failed call comes back with `isError: true` and the reason in plain text. A call with several queries or URLs is an error only if all of them failed; otherwise each failure is reported next to the results that did come back.
+
+| The message says | It means | What to do |
+|---|---|---|
+| `Please set your API key ...` | The tool needs a key and none was sent | Add the `Authorization: Bearer` header |
+| `Authentication failed ... Reason given: ...` | A key was sent and the API rejected it. The reason is the API's own, for example an unknown key | Check the key. A rejection can be remembered for up to 5 minutes after you fix it |
+| `403 Forbidden - Jina billing rejected this API key: ...` | The key is known but could not be charged | Check its balance |
+| `This key is out of quota ...` | The balance is used up | Top up |
+| `Rate limit exceeded ...` | Your key's rate limit on the Embeddings, Reranker or Reader API | Wait, or upgrade the key. `Retry after Ns.` is given when the API named a wait |
+| `The search service is temporarily at capacity ...` | The search backend had no free capacity. It is not about your key | Retry in a few seconds |
+| `503 ... PDF extraction is at capacity ... Retry after 10s.` | Both PDF renderers were busy | Retry after the wait |
+| `504 ... Failed to download PDF: ... (not finished after ...)` | The source was too slow | Retry later |
+| `502 ... Failed to download PDF: ... (the source answered 403)` | The source refused the download. The document may well exist | Retry later, or read it with `read_url` |
+| `... timed out after 30000ms` | No answer within the tool's time limit | Retry |
+
+Time limits per tool are listed live at [mcp.jina.ai](https://mcp.jina.ai/) under `time_limits`, printed from the values the server uses.
 
 ### Why is my content truncated?
 
@@ -364,7 +383,15 @@ npm install
 
 # Start development server
 npm run start
+
+# Type-check, and run the tests
+npm run type-check
+npm test
 ```
+
+`npm test` bundles `test/*.test.ts` with the esbuild that Wrangler already installs and runs them on Node's built-in test runner. Nothing touches the network: `fetch` is stubbed. The tests cover the parts that depend on other services behaving a certain way, which is where this server has broken before: when a `question` read uses the passage it was given and when it reads the full page instead, what each upstream failure is reported as, the blog catalog cache, and that the time limits fit inside each other.
+
+All time limits are in [`src/utils/limits.ts`](src/utils/limits.ts). The version is read from `package.json`; the `/` page and the MCP handshake both report it.
 
 ### Deploy to Cloudflare Workers
 
