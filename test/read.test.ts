@@ -55,6 +55,55 @@ test('an unranked passage is not passed on as the answer', async () => {
     assert.match(result.structuredData.note, /unavailable for this page/);
 });
 
+/** svip's answer when its rerank call failed: the top of the page, no score, and since 2026-11-16 the reason. */
+const unranked = (reason?: string) => () => respond('https://svip.jina.ai/', 200, {
+    results: [{ url: PAGE, title: 'Example', snippet: 'Skip to content | Home | Docs', snippet_source: 'content' }],
+    meta: reason ? { unranked_reason: reason } : {},
+});
+
+test('says so when the reranker rate limit of the key is why there are no passages', async () => {
+    // The commonest cause by far, and the one the caller can do something
+    // about: the limit is on their own key and parallel question reads share it.
+    withSvip(unranked('rate_limited'));
+
+    const result = await read();
+
+    assert.equal(result.structuredData.snippet_source, 'full_content');
+    assert.equal(result.structuredData.content, 'FULL PAGE BODY');
+    assert.match(result.structuredData.note, /rate limit/);
+    assert.match(result.structuredData.note, /fewer/);
+});
+
+test('says so when ranking ran out of time', async () => {
+    withSvip(unranked('timeout'));
+
+    const result = await read();
+
+    assert.equal(result.structuredData.content, 'FULL PAGE BODY');
+    assert.match(result.structuredData.note, /time limit/);
+});
+
+for (const reason of ['unavailable', 'a_reason_added_later', undefined]) {
+    test(`keeps the general note when the reason is ${reason ?? 'not given'}`, async () => {
+        withSvip(unranked(reason));
+
+        const result = await read();
+
+        assert.match(result.structuredData.note, /unavailable for this page/);
+    });
+}
+
+test('the reason survives when the page is read alongside for its links', async () => {
+    // With links or images wanted, the passage call and the full read run
+    // together instead of one after the other; the note must not depend on which.
+    withSvip(unranked('rate_limited'));
+
+    const result = await read({ withAllLinks: true });
+
+    assert.equal(result.structuredData.snippet_source, 'full_content');
+    assert.match(result.structuredData.note, /rate limit/);
+});
+
 test('a negative score is still a score', async () => {
     // jina-reranker-v3.5 scores weak matches below zero.
     withSvip(() => respond('https://svip.jina.ai/', 200, {

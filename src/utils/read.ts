@@ -73,6 +73,44 @@ export type ReadUrlResponse = ReadUrlResult | ReadUrlError;
 // QUESTION-GROUNDED READ
 // ============================================================================
 
+/** The passages svip ranked as answering the question. */
+interface Passages {
+    snippets: string[];
+    title?: string;
+    url?: string;
+    unrankedReason?: undefined;
+}
+
+/** No passages to use, and why svip could not rank any, when it said. */
+interface NoPassages {
+    snippets?: undefined;
+    unrankedReason?: string;
+}
+
+/**
+ * What the model is told when a question read comes back as the full page.
+ *
+ * It used to be one sentence for every cause. Most of the time the cause is
+ * the reranker rate-limiting the caller's key: svip ranks under that key, a
+ * batch of question reads all draw on its limit at once, and a model that is
+ * not told keeps sending batches and keeps getting whole pages - the opposite
+ * of what it passed `question` for. Measured on svip, 2026-11-15: 223 of the
+ * 250 unranked reads that day, in bursts lasting up to 37 seconds.
+ *
+ * Reasons this server does not know get the general sentence, so svip can add
+ * one without this having to change first.
+ */
+function fullContentNote(unrankedReason?: string): string {
+    switch (unrankedReason) {
+        case 'rate_limited':
+            return 'The passages could not be ranked because this Jina API key reached the rate limit of the reranker; returning full content. Reads with a `question` share that limit, so send fewer of them at once.';
+        case 'timeout':
+            return 'The passages could not be ranked within the time limit; returning full content.';
+        default:
+            return 'Question-grounded extraction was unavailable for this page; returning full content.';
+    }
+}
+
 /**
  * Read a page and return only the passages answering `question`.
  *
@@ -98,8 +136,8 @@ async function readWithQuestion(
     question: string,
     urlConfig: ReadUrlConfig,
     bearerToken?: string
-): Promise<{ snippets: string[]; title?: string; url?: string; } | null> {
-    if (!targetUrl || !question) return null;
+): Promise<Passages | NoPassages> {
+    if (!targetUrl || !question) return {};
 
     const response = await fetch('https://svip.jina.ai/', {
         method: 'POST',
@@ -118,13 +156,14 @@ async function readWithQuestion(
         }),
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) return {};
 
     const data = await response.json() as {
         results?: Array<{ snippet?: string; title?: string; url?: string; rerank_score?: number; }>;
+        meta?: { unranked_reason?: string; };
     };
     const first = data?.results?.[0];
-    if (!first?.snippet) return null;
+    if (!first?.snippet) return {};
 
     // A snippet is only an answer if svip ranked it. When its rerank call fails
     // or runs out of budget, svip returns the first passage of the page
@@ -132,8 +171,10 @@ async function readWithQuestion(
     // difference is that there is no `rerank_score`. Passing that on told the
     // model "this is the passage that answers your question" about a page
     // header. Treat it as no extraction, so the caller falls back to the full
-    // page and says so.
-    if (typeof first.rerank_score !== 'number') return null;
+    // page and says so, along with svip's reason when it gives one.
+    if (typeof first.rerank_score !== 'number') {
+        return { unrankedReason: data.meta?.unranked_reason };
+    }
 
     // One url in, so at most one result out; its snippet already joins the top
     // `topk` passages with the separator deep search uses.
@@ -209,7 +250,7 @@ export async function readUrlFromConfig(
 
         // A failure here must not fail the read; it degrades to full content.
         const extractPassages = () =>
-            readWithQuestion(targetUrl, question as string, urlConfig, bearerToken).catch(() => null);
+            readWithQuestion(targetUrl, question as string, urlConfig, bearerToken).catch((): NoPassages => ({}));
 
         // svip reads the page itself, through r.jina.ai under the caller's key, so
         // a full read running alongside it fetched and billed the same page twice
@@ -217,9 +258,11 @@ export async function readUrlFromConfig(
         // extraction comes back empty, or concurrently when the caller also wants
         // links/images, which the passage endpoint does not return.
         const wantsPageExtras = Boolean(urlConfig.withAllLinks || urlConfig.withAllImages);
+        let unrankedReason: string | undefined;
         if (useSvip && !wantsPageExtras) {
             const passages = await extractPassages();
-            if (passages) {
+            unrankedReason = passages.unrankedReason;
+            if (passages.snippets) {
                 return {
                     success: true,
                     url: urlConfig.url,
@@ -243,8 +286,9 @@ export async function readUrlFromConfig(
                 headers,
                 body: JSON.stringify({ url: targetUrl }),
             }),
-            useSvip && wantsPageExtras ? extractPassages() : Promise.resolve(null),
+            useSvip && wantsPageExtras ? extractPassages() : Promise.resolve<NoPassages>({}),
         ]);
+        unrankedReason ??= snippetResult.unrankedReason;
 
         if (!response.ok) {
             // r.jina.ai explains the failure (DNS, timeout, blocked) in `message`;
@@ -280,7 +324,7 @@ export async function readUrlFromConfig(
         const content: string = data.data.content || "";
 
         if (question) {
-            if (snippetResult) {
+            if (snippetResult.snippets) {
                 structuredData.question = question;
                 structuredData.snippets = snippetResult.snippets;
                 // The full body is omitted: the point of passing a question is to
@@ -304,7 +348,7 @@ export async function readUrlFromConfig(
             structuredData.question = question;
             structuredData.snippet_source = 'full_content';
             structuredData.note = useSvip
-                ? 'Question-grounded extraction was unavailable for this page; returning full content.'
+                ? fullContentNote(unrankedReason)
                 : 'Question-grounded extraction requires a Jina API key; returning full content.';
         }
 

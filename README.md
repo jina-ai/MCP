@@ -334,6 +334,17 @@ Reproduced failure modes. The response does not flag any of these:
 
 A question-grounded read is two steps with their own limits: up to 25s for the passages (the extraction itself is given 20s and 5s to deliver its answer), then, only if that produced nothing, up to 30s for the full page. A plain read gets 30s. In a URL array carrying a `question`, each URL has 60s for both steps together.
 
+When the full page comes back instead of passages, the response has `snippet_source: full_content` and a `note` saying why:
+
+| `note` says | Cause | What to do |
+|---|---|---|
+| the key reached the rate limit of the reranker | Passages are ranked under your own API key, and every read with a `question` draws on that key's reranker limit. A batch of them at once can use it up for the better part of a minute. | Send fewer reads with a `question` at once. |
+| not ranked within the time limit | Fetching the page and ranking it did not fit in the 20s the extraction is given. | Read it again, or read it without `question`. |
+| extraction was unavailable for this page | Anything else: the page has too little text to rank, or the ranking service failed. | Use the full page that was returned. |
+| extraction requires a Jina API key | No key was sent. | Add a key. |
+
+About 1 in 100 reads with a `question` loses its ranking (250 of 20,814 on 2026-11-15), nine in ten of those to the rate limit.
+
 ### Reading a scanned document or a PDF
 
 A plain read parses HTML. It returns nothing useful when the text is not in the markup (scanned pages, image-only PDFs), and flattens formulas and table structure otherwise. Pass `ocr` and the rendered page goes through [jina-ocr-v1](https://jina.ai/models/jina-ocr-v1) as an image, returning Markdown with formulas and tables intact.
