@@ -50,6 +50,8 @@ export const RERANK_TIMEOUT_MS = 30000;
 export const EMBEDDINGS_TIMEOUT_MS = 30000;
 /** svip gives one extraction 50s, and the platform in front of it cuts the request at 60s. */
 export const EXTRACT_PDF_TIMEOUT_MS = 90000;
+/** deepsearch.jina.ai multi-step research loop deadline. */
+export const DEEP_RESEARCH_TIMEOUT_MS = 120000;
 
 /** Arrays accepted by the search tools and read_url. */
 export const MAX_BATCH_SIZE = 5;
@@ -66,5 +68,6 @@ export function describeLimits(): Record<string, string> {
 		sort_by_relevance: seconds(RERANK_TIMEOUT_MS),
 		deduplicate_strings: seconds(EMBEDDINGS_TIMEOUT_MS),
 		extract_pdf: seconds(EXTRACT_PDF_TIMEOUT_MS),
+		deep_research: seconds(DEEP_RESEARCH_TIMEOUT_MS),
 	};
 }
