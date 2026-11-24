@@ -13,17 +13,35 @@ const SERVER_NAME: string = packageJson.name;
 
 // Tool tags mapping for filtering
 const TOOL_TAGS: Record<string, string[]> = {
-	search: ["search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog"],
+	search: [
+		"search_web",
+		"search_arxiv",
+		"search_ssrn",
+		"search_images",
+		"search_jina_blog",
+		"deep_research",
+	],
 	read: ["read_url", "capture_screenshot_url"],
 	utility: ["primer", "guess_datetime_url", "extract_pdf"],
 	rerank: ["sort_by_relevance", "deduplicate_strings"],
+	research: ["deep_research"],
 };
 
 // All available tools
 const ALL_TOOLS = [
-	"primer", "read_url", "capture_screenshot_url", "guess_datetime_url",
-	"search_web", "search_arxiv", "search_ssrn", "search_images", "search_jina_blog",
-	"sort_by_relevance", "deduplicate_strings", "extract_pdf"
+	"primer",
+	"read_url",
+	"capture_screenshot_url",
+	"guess_datetime_url",
+	"search_web",
+	"search_arxiv",
+	"search_ssrn",
+	"search_images",
+	"search_jina_blog",
+	"sort_by_relevance",
+	"deduplicate_strings",
+	"extract_pdf",
+	"deep_research",
 ];
 // Parse tool filter from query parameters
 function parseToolFilter(url: URL): Set<string> | null {
@@ -38,13 +56,14 @@ function parseToolFilter(url: URL): Set<string> | null {
 	}
 
 	// Start with all tools, unless include_tags or include_tools is specified (then start empty)
-	let enabledTools = (includeTags || includeTools)
-		? new Set<string>()
-		: new Set<string>(ALL_TOOLS);
+	let enabledTools =
+		includeTags || includeTools
+			? new Set<string>()
+			: new Set<string>(ALL_TOOLS);
 
 	// Apply include_tags first (lowest priority) - add tagged tools
 	if (includeTags) {
-		const tags = includeTags.split(",").map(t => t.trim().toLowerCase());
+		const tags = includeTags.split(",").map((t) => t.trim().toLowerCase());
 		for (const tag of tags) {
 			if (TOOL_TAGS[tag]) {
 				for (const tool of TOOL_TAGS[tag]) {
@@ -56,7 +75,7 @@ function parseToolFilter(url: URL): Set<string> | null {
 
 	// Apply include_tools - add specific tools
 	if (includeTools) {
-		const tools = includeTools.split(",").map(t => t.trim());
+		const tools = includeTools.split(",").map((t) => t.trim());
 		for (const tool of tools) {
 			if (ALL_TOOLS.includes(tool)) {
 				enabledTools.add(tool);
@@ -66,7 +85,7 @@ function parseToolFilter(url: URL): Set<string> | null {
 
 	// Apply exclude_tags - remove tagged tools
 	if (excludeTags) {
-		const tags = excludeTags.split(",").map(t => t.trim().toLowerCase());
+		const tags = excludeTags.split(",").map((t) => t.trim().toLowerCase());
 		for (const tag of tags) {
 			if (TOOL_TAGS[tag]) {
 				for (const tool of TOOL_TAGS[tag]) {
@@ -78,7 +97,7 @@ function parseToolFilter(url: URL): Set<string> | null {
 
 	// Apply exclude_tools last (highest priority) - remove specific tools
 	if (excludeTools) {
-		const tools = excludeTools.split(",").map(t => t.trim());
+		const tools = excludeTools.split(",").map((t) => t.trim());
 		for (const tool of tools) {
 			enabledTools.delete(tool);
 		}
@@ -86,7 +105,6 @@ function parseToolFilter(url: URL): Set<string> | null {
 
 	return enabledTools;
 }
-
 
 // Server instructions for MCP tool discovery (SEO for LLM tool search).
 // Kept to what actually routes a request: which tool, and the distinctions
@@ -101,12 +119,16 @@ Picking a tool:
 - read_url fetches one page as markdown. Pass its \`question\` to get only the answering passages instead of the whole body; this is much cheaper than reading a full page into context.
 - \`search_web\`, \`search_arxiv\`, \`search_ssrn\` and \`read_url\` accept an array on \`query\`/\`url\`; pass an array to run them concurrently instead of repeating single calls.
 - search_arxiv for preprints, search_ssrn for social science and finance, search_jina_blog for Jina's own models and releases.
+- deep_research conducts multi-step iterative research, page reading and reasoning (deepsearch.jina.ai) for complex or synthesis-heavy queries.
 - primer supplies the current time and user location; call it before answering anything time- or location-dependent.`;
 
 // Create the MCP server instance with request-scoped props
 // Note: We create a fresh server per request to avoid race conditions with concurrent requests
 // The props are captured in the closure at creation time, ensuring each request has its own context
-function createServer(enabledTools: Set<string> | null, props: Record<string, unknown>) {
+function createServer(
+	enabledTools: Set<string> | null,
+	props: Record<string, unknown>,
+) {
 	const server = new McpServer(
 		{
 			name: "Jina AI Official MCP Server",
@@ -114,7 +136,7 @@ function createServer(enabledTools: Set<string> | null, props: Record<string, un
 		},
 		{
 			instructions: SERVER_INSTRUCTIONS,
-		}
+		},
 	);
 
 	// Register all Jina AI tools with props captured in closure (request-scoped)
@@ -148,7 +170,9 @@ export default {
 		props.ghostApiKey = env.VITE_GHOST_API_KEY;
 
 		// API base URL for embedding/reranker endpoints (bypasses Cloudflare proxy issues)
-		props.apiBaseUrl = env.API_BASE_URL || 'https://api.jina.ai';
+		props.apiBaseUrl = env.API_BASE_URL || "https://api.jina.ai";
+		props.deepsearchBaseUrl =
+			(env as any).DEEPSEARCH_BASE_URL || "https://deepsearch.jina.ai";
 
 		// Client identity for the response-size guardrail. This server is stateless -
 		// createMcpHandler gets no `storage`, so WorkerTransport never replays the
@@ -175,14 +199,16 @@ export default {
 		};
 		if (cf?.timezone) {
 			context.timestamp.userTimezone = cf.timezone;
-			context.timestamp.userLocalTime = new Date().toLocaleString('en-US', { timeZone: cf.timezone as string });
+			context.timestamp.userLocalTime = new Date().toLocaleString("en-US", {
+				timeZone: cf.timezone as string,
+			});
 		}
 
 		// Add client info (only if values exist)
 		const client: any = {};
-		const clientIp = request.headers.get('CF-Connecting-IP');
-		const userAgent = request.headers.get('User-Agent');
-		const acceptLanguage = request.headers.get('Accept-Language');
+		const clientIp = request.headers.get("CF-Connecting-IP");
+		const userAgent = request.headers.get("User-Agent");
+		const acceptLanguage = request.headers.get("Accept-Language");
 
 		if (clientIp) client.ip = clientIp;
 
@@ -206,7 +232,7 @@ export default {
 		if (cf?.latitude && cf?.longitude) {
 			location.coordinates = {
 				lat: cf.latitude,
-				lon: cf.longitude
+				lon: cf.longitude,
 			};
 		}
 		if (cf?.isEUCountry === "1") location.isEU = true;
@@ -226,7 +252,11 @@ export default {
 
 		// Handle MCP endpoints using createMcpHandler (stateless, no Durable Objects)
 		// /v1 is the primary endpoint, /sse is kept for backward compatibility
-		if (url.pathname === "/v1" || url.pathname === "/sse" || url.pathname === "/sse/message") {
+		if (
+			url.pathname === "/v1" ||
+			url.pathname === "/sse" ||
+			url.pathname === "/sse/message"
+		) {
 			// Create server with request-scoped props (fresh per request to avoid race
 			// conditions). Built here rather than for every path: `/` and unknown
 			// paths used to register all tools only to discard them.
@@ -237,9 +267,10 @@ export default {
 				corsOptions: {
 					origin: "*",
 					methods: "GET, POST, DELETE, OPTIONS",
-					headers: "Content-Type, Accept, Authorization, mcp-session-id, MCP-Protocol-Version",
+					headers:
+						"Content-Type, Accept, Authorization, mcp-session-id, MCP-Protocol-Version",
 					exposeHeaders: "mcp-session-id",
-				}
+				},
 			});
 
 			return handler(request, env, ctx);
@@ -268,36 +299,45 @@ export default {
 				get_api_key: "https://jina.ai/api-dashboard/",
 				endpoints: {
 					v1: "/v1 - Primary endpoint",
-					sse: "/sse - Alias for /v1 (backward compatibility)"
+					sse: "/sse - Alias for /v1 (backward compatibility)",
 				},
 				tool_filtering: {
-					description: "Reduce token usage by filtering tools via query parameters",
+					description:
+						"Reduce token usage by filtering tools via query parameters",
 					parameters: {
-						exclude_tools: "Comma-separated tool names to exclude (e.g., search_web,search_arxiv)",
+						exclude_tools:
+							"Comma-separated tool names to exclude (e.g., search_web,search_arxiv)",
 						include_tools: "Comma-separated tool names to include",
 						exclude_tags: "Comma-separated tags to exclude (e.g., search,read)",
 						include_tags: "Comma-separated tags to include",
-						max_tokens: "Cap the size of read_url responses in tokens (0 disables truncation)"
+						max_tokens:
+							"Cap the size of read_url responses in tokens (0 disables truncation)",
 					},
 					tags: TOOL_TAGS,
 					examples: [
 						"/v1?exclude_tags=search - Exclude all search tools",
 						"/v1?include_tags=search,read - Only include search and read tools",
-						"/v1?exclude_tools=search_ssrn,search_images - Exclude specific tools"
+						"/v1?exclude_tools=search_ssrn,search_images - Exclude specific tools",
 					],
-					precedence: "exclude_tools > exclude_tags > include_tools > include_tags"
+					precedence:
+						"exclude_tools > exclude_tags > include_tools > include_tags",
 				},
 				api_key: {
-					not_needed: "primer, read_url, capture_screenshot_url, guess_datetime_url, search_jina_blog",
-					needed: "search_web, search_arxiv, search_ssrn, search_images, sort_by_relevance, deduplicate_strings, extract_pdf, and read_url with a question (without a key it returns the full page)"
+					not_needed:
+						"primer, read_url, capture_screenshot_url, guess_datetime_url, search_jina_blog",
+					needed:
+						"search_web, search_arxiv, search_ssrn, search_images, sort_by_relevance, deduplicate_strings, extract_pdf, and read_url with a question (without a key it returns the full page)",
 				},
 				// Printed from the constants the tools use, so this cannot go stale.
 				time_limits: describeLimits(),
 				errors: {
-					reporting: "A failed call has isError: true and says why in plain text. A call with several queries or URLs is an error only if all of them failed; otherwise each failure is reported next to the results that did come back.",
-					key_rejected: "The message carries the reason the API gave, e.g. an unknown key or a key that billing refused.",
+					reporting:
+						"A failed call has isError: true and says why in plain text. A call with several queries or URLs is an error only if all of them failed; otherwise each failure is reported next to the results that did come back.",
+					key_rejected:
+						"The message carries the reason the API gave, e.g. an unknown key or a key that billing refused.",
 					busy: "When a service is rate limited or out of capacity the message says so, says whether it is about your key, and gives the wait the service asked for if it named one.",
-					read_url_fallback: "With a question, read_url returns passages (snippet_source: content). If none could be ranked it returns the whole page instead, marked snippet_source: full_content with a note."
+					read_url_fallback:
+						"With a question, read_url returns passages (snippet_source: content). If none could be ranked it returns the whole page instead, marked snippet_source: full_content with a note.",
 				},
 				tools: [
 					"primer - Current time, user timezone, location and client context",
@@ -311,25 +351,28 @@ export default {
 					"search_jina_blog - Search Jina AI news at jina.ai/news",
 					"sort_by_relevance - Rerank documents by relevance to a query",
 					"deduplicate_strings - Select top-k semantically distinct strings",
-					"extract_pdf - Extract figures, tables and equations from a PDF"
-				]
+					"extract_pdf - Extract figures, tables and equations from a PDF",
+				],
 			};
 
 			return new Response(yamlStringify(info), {
 				headers: { "Content-Type": "text/yaml" },
-				status: 200
+				status: 200,
 			});
 		}
 
 		// Return helpful 404 for unknown paths
-		return new Response(yamlStringify({
-			error: "Endpoint not found",
-			message: `Path '${url.pathname}' is not available`,
-			available_endpoints: ["/", "/v1", "/sse"],
-			suggestion: "Use /v1 for MCP client connections"
-		}), {
-			headers: { "Content-Type": "text/yaml" },
-			status: 404
-		});
+		return new Response(
+			yamlStringify({
+				error: "Endpoint not found",
+				message: `Path '${url.pathname}' is not available`,
+				available_endpoints: ["/", "/v1", "/sse"],
+				suggestion: "Use /v1 for MCP client connections",
+			}),
+			{
+				headers: { "Content-Type": "text/yaml" },
+				status: 404,
+			},
+		);
 	},
 };

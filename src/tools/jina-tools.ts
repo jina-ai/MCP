@@ -1,9 +1,15 @@
 import { z } from "zod";
 import { stringify as yamlStringify } from "yaml";
 
-import { handleApiError, checkBearerToken } from "../utils/api-error-handler.js";
+import {
+	handleApiError,
+	checkBearerToken,
+} from "../utils/api-error-handler.js";
 import { downloadImages } from "../utils/image-downloader.js";
-import { lazyGreedySelection, lazyGreedySelectionWithSaturation } from "../utils/submodular-optimization.js";
+import {
+	lazyGreedySelection,
+	lazyGreedySelectionWithSaturation,
+} from "../utils/submodular-optimization.js";
 import { applyTokenGuardrail } from "../utils/token-guardrail.js";
 import {
 	EMBEDDINGS_TIMEOUT_MS,
@@ -30,10 +36,10 @@ import {
 	type SearchJinaBlogArgs,
 	type SearchResultOrError,
 	formatSingleSearchResultToContentItems,
-	formatParallelSearchResultsToContentItems
+	formatParallelSearchResultsToContentItems,
 } from "../utils/search.js";
+import { executeDeepResearch } from "../utils/deep-research.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-
 
 /**
  * Guess the media type of a raw base64 image from its leading bytes.
@@ -43,13 +49,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
  */
 function sniffBase64ImageMimeType(base64: string): string {
 	const head = base64.slice(0, 16);
-	if (head.startsWith('iVBORw0KGgo')) return 'image/png';
-	if (head.startsWith('R0lGOD')) return 'image/gif';
-	if (head.startsWith('UklGR')) return 'image/webp';
-	if (head.startsWith('PHN2Zy') || head.startsWith('PD94bW')) return 'image/svg+xml';
-	return 'image/jpeg';
+	if (head.startsWith("iVBORw0KGgo")) return "image/png";
+	if (head.startsWith("R0lGOD")) return "image/gif";
+	if (head.startsWith("UklGR")) return "image/webp";
+	if (head.startsWith("PHN2Zy") || head.startsWith("PD94bW"))
+		return "image/svg+xml";
+	return "image/jpeg";
 }
-
 
 /**
  * Decode one base64 embedding (little-endian float32, as the API sends it).
@@ -58,26 +64,35 @@ function sniffBase64ImageMimeType(base64: string): string {
  * 11.7MB to 5.5MB and from ~5.8s to ~1.05s (3 runs each).
  */
 function decodeBase64Embedding(encoded: string): Float32Array {
-	const bytes = Buffer.from(encoded, 'base64');
+	const bytes = Buffer.from(encoded, "base64");
 	// Copied out because Buffer.from may return a view at an offset that is not
 	// a multiple of 4, which a Float32Array cannot sit on.
-	return new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+	return new Float32Array(
+		bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+	);
 }
 
-export function registerJinaTools(server: McpServer, getProps: () => any, enabledTools: Set<string> | null = null) {
+export function registerJinaTools(
+	server: McpServer,
+	getProps: () => any,
+	enabledTools: Set<string> | null = null,
+) {
 	// Helper to get client name for guardrail check
 	// getClientVersion() only has a value on the server instance that handled
 	// `initialize`; this deployment builds a fresh server per request, so it is
 	// undefined at tool-call time. props.clientHint (the transport User-Agent,
 	// set in index.ts) is the fallback that keeps the guardrail reachable.
-	const getClientName = () => server.server.getClientVersion()?.name ?? (getProps().clientHint as string | undefined);
+	const getClientName = () =>
+		server.server.getClientVersion()?.name ??
+		(getProps().clientHint as string | undefined);
 	// Helper function to create error responses
 	const createErrorResponse = (message: string) => ({
 		content: [{ type: "text" as const, text: message }],
 		isError: true,
 	});
 	// Helper to check if a tool is enabled
-	const isToolEnabled = (toolName: string) => enabledTools === null || enabledTools.has(toolName);
+	const isToolEnabled = (toolName: string) =>
+		enabledTools === null || enabledTools.has(toolName);
 
 	// The text search tools share one shape: a query or an array of up to 5, run
 	// concurrently after removing duplicates. Failures carry isError so a client
@@ -86,20 +101,27 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 	const runSearchTool = async <T extends { query: string }>(
 		query: string | string[],
 		toArgs: (query: string) => T,
-		search: (args: T) => Promise<SearchResultOrError>
+		search: (args: T) => Promise<SearchResultOrError>,
 	) => {
-		if (typeof query === 'string' || query.length === 1) {
-			const result = await search(toArgs(typeof query === 'string' ? query : query[0]));
-			return 'error' in result
+		if (typeof query === "string" || query.length === 1) {
+			const result = await search(
+				toArgs(typeof query === "string" ? query : query[0]),
+			);
+			return "error" in result
 				? createErrorResponse(`Error: ${result.error}`)
 				: { content: formatSingleSearchResultToContentItems(result) };
 		}
 
-		const results = await executeParallelSearches([...new Set(query)].map(toArgs), search, { timeout: PARALLEL_SEARCH_TIMEOUT_MS });
+		const results = await executeParallelSearches(
+			[...new Set(query)].map(toArgs),
+			search,
+			{ timeout: PARALLEL_SEARCH_TIMEOUT_MS },
+		);
 		const content = formatParallelSearchResultsToContentItems(results);
-		return results.every((result) => 'error' in result) ? { content, isError: true } : { content };
+		return results.every((result) => "error" in result)
+			? { content, isError: true }
+			: { content };
 	};
-
 
 	// Primer tool - provides current world knowledge for LLMs
 	if (isToolEnabled("primer")) {
@@ -120,7 +142,9 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						content: [{ type: "text" as const, text: yamlStringify(context) }],
 					};
 				} catch (error) {
-					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+					return createErrorResponse(
+						`Error: ${error instanceof Error ? error.message : String(error)}`,
+					);
 				}
 			},
 		);
@@ -132,12 +156,14 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"guess_datetime_url",
 			"Guess when a page was published or last updated, with a confidence score. Checks HTTP headers, metadata, Schema.org, visible dates, feeds and sitemaps.",
 			{
-				url: z.string().url()
+				url: z.string().url(),
 			},
 			async ({ url }: { url: string }) => {
 				try {
 					// Import the utility function
-					const { guessDatetimeFromUrl } = await import("../utils/guess-datetime.js");
+					const { guessDatetimeFromUrl } = await import(
+						"../utils/guess-datetime.js"
+					);
 
 					// Analyze the URL for datetime information
 					const result = await guessDatetimeFromUrl(url);
@@ -146,7 +172,9 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						content: [{ type: "text" as const, text: yamlStringify(result) }],
 					};
 				} catch (error) {
-					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+					return createErrorResponse(
+						`Error: ${error instanceof Error ? error.message : String(error)}`,
+					);
 				}
 			},
 		);
@@ -159,28 +187,45 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"Screenshot a page as base64 JPEG. Use when the page must be seen rather than read.",
 			{
 				url: z.string().url(),
-				firstScreenOnly: z.boolean().default(false).describe("Capture only the first screen instead of the full page. Faster."),
-				return_url: z.boolean().default(false).describe("Return URLs instead of base64 images.")
+				firstScreenOnly: z
+					.boolean()
+					.default(false)
+					.describe(
+						"Capture only the first screen instead of the full page. Faster.",
+					),
+				return_url: z
+					.boolean()
+					.default(false)
+					.describe("Return URLs instead of base64 images."),
 			},
-			async ({ url, firstScreenOnly, return_url }: { url: string; firstScreenOnly: boolean; return_url: boolean }) => {
+			async ({
+				url,
+				firstScreenOnly,
+				return_url,
+			}: {
+				url: string;
+				firstScreenOnly: boolean;
+				return_url: boolean;
+			}) => {
 				try {
 					const props = getProps();
 					const headers: Record<string, string> = {
-						'Accept': 'application/json',
-						'Content-Type': 'application/json',
-						'X-Return-Format': firstScreenOnly === true ? 'screenshot' : 'pageshot',
+						Accept: "application/json",
+						"Content-Type": "application/json",
+						"X-Return-Format":
+							firstScreenOnly === true ? "screenshot" : "pageshot",
 					};
 
 					// Add Authorization header if bearer token is available
 					if (props.bearerToken) {
-						headers['Authorization'] = `Bearer ${props.bearerToken}`;
+						headers["Authorization"] = `Bearer ${props.bearerToken}`;
 					} else if (props.clientIp) {
 						// Per-caller anonymous rate limit, as in read_url
-						headers['X-Forwarded-For'] = props.clientIp;
+						headers["X-Forwarded-For"] = props.clientIp;
 					}
 
-					const response = await fetch('https://r.jina.ai/', {
-						method: 'POST',
+					const response = await fetch("https://r.jina.ai/", {
+						method: "POST",
 						signal: AbortSignal.timeout(SCREENSHOT_TIMEOUT_MS),
 						headers,
 						body: JSON.stringify({ url }),
@@ -190,7 +235,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						return handleApiError(response, "Screenshot capture");
 					}
 
-					const data = await response.json() as any;
+					const data = (await response.json()) as any;
 
 					// Get the screenshot URL from the response. An unexpected payload used
 					// to surface as "Cannot read properties of undefined" rather than
@@ -201,7 +246,10 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					}
 
 					// Prepare response content - always return as list structure for consistency
-					const contentItems: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [];
+					const contentItems: Array<
+						| { type: "text"; text: string }
+						| { type: "image"; data: string; mimeType: string }
+					> = [];
 
 					if (return_url) {
 						// Return the URL as text
@@ -214,14 +262,21 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						// (often 1280x20000); fitting that inside an 800x800 box left a
 						// ~51px-wide sliver in which nothing was legible. Constrain the
 						// width only and let the height follow.
-						const processedResults = await downloadImages(imageUrl, 1, SCREENSHOT_DOWNLOAD_TIMEOUT_MS, {
-							width: 1024,
-							height: firstScreenOnly === true ? 1024 : null,
-						});
+						const processedResults = await downloadImages(
+							imageUrl,
+							1,
+							SCREENSHOT_DOWNLOAD_TIMEOUT_MS,
+							{
+								width: 1024,
+								height: firstScreenOnly === true ? 1024 : null,
+							},
+						);
 						const processedResult = processedResults[0];
 
 						if (!processedResult?.success) {
-							throw new Error(`Failed to process screenshot: ${processedResult?.error ?? 'download timed out'}`);
+							throw new Error(
+								`Failed to process screenshot: ${processedResult?.error ?? "download timed out"}`,
+							);
 						}
 
 						contentItems.push({
@@ -235,7 +290,9 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						content: contentItems,
 					};
 				} catch (error) {
-					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+					return createErrorResponse(
+						`Error: ${error instanceof Error ? error.message : String(error)}`,
+					);
 				}
 			},
 		);
@@ -247,70 +304,173 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"read_url",
 			"Fetch a URL (page or PDF) as clean markdown. Pass `question` to get only the passages answering it instead of the whole page - far cheaper than reading the full body into context.",
 			{
-				url: z.union([z.string().url(), z.array(z.string().url()).min(1).max(MAX_BATCH_SIZE)]).describe("Page or PDF URL, or up to 5 URLs to read in parallel."),
-				withAllLinks: z.boolean().optional().describe("Also return every link on the page."),
-				withAllImages: z.boolean().optional().describe("Also return every image on the page."),
-				question: z.string().optional().describe("Return only the passages answering this question, instead of the full body. Omit for the whole page."),
-				chunk_size: z.number().int().min(1).max(4096).optional().describe("Passage size in words, default 100. Larger gives more surrounding context, smaller pinpoints the answer. Comparable across scripts. Needs `question`."),
-				topk: z.number().int().min(1).max(50).optional().describe("Passages to return, default 1. Needs `question`."),
-				ocr: z.boolean().optional().describe("Read the rendered page as an image with jina-ocr-v1 instead of its HTML. Use for scanned documents and PDFs whose text is not in the markup, and to keep formulas and table structure. Parses ONE page per call, page 1 unless `page` says otherwise, and costs about 40x the tokens per page, so leave off unless the HTML path has failed you."),
-				page: z.number().int().min(1).optional().describe("Which page the OCR pass should parse, 1-based. Needs `ocr`; the HTML path returns the whole document at once.")
+				url: z
+					.union([
+						z.string().url(),
+						z.array(z.string().url()).min(1).max(MAX_BATCH_SIZE),
+					])
+					.describe("Page or PDF URL, or up to 5 URLs to read in parallel."),
+				withAllLinks: z
+					.boolean()
+					.optional()
+					.describe("Also return every link on the page."),
+				withAllImages: z
+					.boolean()
+					.optional()
+					.describe("Also return every image on the page."),
+				question: z
+					.string()
+					.optional()
+					.describe(
+						"Return only the passages answering this question, instead of the full body. Omit for the whole page.",
+					),
+				chunk_size: z
+					.number()
+					.int()
+					.min(1)
+					.max(4096)
+					.optional()
+					.describe(
+						"Passage size in words, default 100. Larger gives more surrounding context, smaller pinpoints the answer. Comparable across scripts. Needs `question`.",
+					),
+				topk: z
+					.number()
+					.int()
+					.min(1)
+					.max(50)
+					.optional()
+					.describe("Passages to return, default 1. Needs `question`."),
+				ocr: z
+					.boolean()
+					.optional()
+					.describe(
+						"Read the rendered page as an image with jina-ocr-v1 instead of its HTML. Use for scanned documents and PDFs whose text is not in the markup, and to keep formulas and table structure. Parses ONE page per call, page 1 unless `page` says otherwise, and costs about 40x the tokens per page, so leave off unless the HTML path has failed you.",
+					),
+				page: z
+					.number()
+					.int()
+					.min(1)
+					.optional()
+					.describe(
+						"Which page the OCR pass should parse, 1-based. Needs `ocr`; the HTML path returns the whole document at once.",
+					),
 			},
-			async ({ url, withAllLinks, withAllImages, question, chunk_size, topk, ocr, page }: { url: string | string[]; withAllLinks?: boolean; withAllImages?: boolean; question?: string; chunk_size?: number; topk?: number; ocr?: boolean; page?: number }) => {
+			async ({
+				url,
+				withAllLinks,
+				withAllImages,
+				question,
+				chunk_size,
+				topk,
+				ocr,
+				page,
+			}: {
+				url: string | string[];
+				withAllLinks?: boolean;
+				withAllImages?: boolean;
+				question?: string;
+				chunk_size?: number;
+				topk?: number;
+				ocr?: boolean;
+				page?: number;
+			}) => {
 				try {
 					const props = getProps();
 
 					// A question-grounded read is two steps: passages from svip and, if
 					// that yields nothing, the full page. Both have to fit, so it gets
 					// more than the plain read budget; utils/limits.ts has the figures.
-					const readTimeout = question ? QUESTION_READ_TIMEOUT_MS : PLAIN_READ_TIMEOUT_MS;
+					const readTimeout = question
+						? QUESTION_READ_TIMEOUT_MS
+						: PLAIN_READ_TIMEOUT_MS;
 
 					// Handle single URL or single-element array
-					if (typeof url === 'string' || (Array.isArray(url) && url.length === 1)) {
-						const singleUrl = typeof url === 'string' ? url : url[0];
+					if (
+						typeof url === "string" ||
+						(Array.isArray(url) && url.length === 1)
+					) {
+						const singleUrl = typeof url === "string" ? url : url[0];
 
 						// Import the utility function
 						const { readUrlFromConfig } = await import("../utils/read.js");
 
 						// Use the shared utility function
-						const result = await readUrlFromConfig({ url: singleUrl, withAllLinks: withAllLinks || false, withAllImages: withAllImages || false, question, chunk_size, topk, ocr, page }, props.bearerToken, props.clientIp);
+						const result = await readUrlFromConfig(
+							{
+								url: singleUrl,
+								withAllLinks: withAllLinks || false,
+								withAllImages: withAllImages || false,
+								question,
+								chunk_size,
+								topk,
+								ocr,
+								page,
+							},
+							props.bearerToken,
+							props.clientIp,
+						);
 
-						if ('error' in result) {
+						if ("error" in result) {
 							return createErrorResponse(result.error);
 						}
 
-						return applyTokenGuardrail({
-							content: [{
-								type: "text" as const,
-								text: yamlStringify(result.structuredData),
-							}],
-						}, props.bearerToken, getClientName(), props.apiBaseUrl, props.maxResponseTokens);
+						return applyTokenGuardrail(
+							{
+								content: [
+									{
+										type: "text" as const,
+										text: yamlStringify(result.structuredData),
+									},
+								],
+							},
+							props.bearerToken,
+							getClientName(),
+							props.apiBaseUrl,
+							props.maxResponseTokens,
+						);
 					}
 
 					// Handle multiple URLs with parallel reading
 					if (Array.isArray(url) && url.length > 1) {
-						const urls = url.map(u => ({ url: u, withAllLinks: withAllLinks || false, withAllImages: withAllImages || false, question, chunk_size, topk, ocr, page }));
+						const urls = url.map((u) => ({
+							url: u,
+							withAllLinks: withAllLinks || false,
+							withAllImages: withAllImages || false,
+							question,
+							chunk_size,
+							topk,
+							ocr,
+							page,
+						}));
 
-						const uniqueUrls = urls.filter((urlConfig, index, self) =>
-							index === self.findIndex(u => u.url === urlConfig.url)
+						const uniqueUrls = urls.filter(
+							(urlConfig, index, self) =>
+								index === self.findIndex((u) => u.url === urlConfig.url),
 						);
 
 						// Import the utility functions
-						const { executeParallelUrlReads } = await import("../utils/read.js");
+						const { executeParallelUrlReads } = await import(
+							"../utils/read.js"
+						);
 
 						// Execute parallel URL reads using the utility
-						const results = await executeParallelUrlReads(uniqueUrls, props.bearerToken, readTimeout, props.clientIp);
+						const results = await executeParallelUrlReads(
+							uniqueUrls,
+							props.bearerToken,
+							readTimeout,
+							props.clientIp,
+						);
 
 						// Format results for consistent output
-						const contentItems: Array<{ type: 'text'; text: string }> = [];
+						const contentItems: Array<{ type: "text"; text: string }> = [];
 
 						for (const result of results) {
-							if ('success' in result && result.success) {
+							if ("success" in result && result.success) {
 								contentItems.push({
 									type: "text" as const,
 									text: yamlStringify(result.structuredData),
 								});
-							} else if ('error' in result) {
+							} else if ("error" in result) {
 								contentItems.push({
 									type: "text" as const,
 									text: `Error reading ${result.url}: ${result.error}`,
@@ -318,14 +478,22 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 							}
 						}
 
-						return applyTokenGuardrail({
-							content: contentItems,
-						}, props.bearerToken, getClientName(), props.apiBaseUrl, props.maxResponseTokens);
+						return applyTokenGuardrail(
+							{
+								content: contentItems,
+							},
+							props.bearerToken,
+							getClientName(),
+							props.apiBaseUrl,
+							props.maxResponseTokens,
+						);
 					}
 
 					return createErrorResponse("Invalid URL format");
 				} catch (error) {
-					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+					return createErrorResponse(
+						`Error: ${error instanceof Error ? error.message : String(error)}`,
+					);
 				}
 			},
 		);
@@ -337,14 +505,36 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"search_web",
 			"Search the web. Returns titles, URLs and search-engine snippets.",
 			{
-				query: z.union([z.string(), z.array(z.string()).min(1).max(MAX_BATCH_SIZE)]),
+				query: z.union([
+					z.string(),
+					z.array(z.string()).min(1).max(MAX_BATCH_SIZE),
+				]),
 				num: z.number().int().min(1).max(10).default(10),
-				tbs: z.string().optional().describe("Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year)."),
+				tbs: z
+					.string()
+					.optional()
+					.describe(
+						"Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year).",
+					),
 				location: z.string().optional(),
 				gl: z.string().optional().describe("Country code, e.g. 'de'."),
-				hl: z.string().optional().describe("Language code, e.g. 'zh-cn'.")
+				hl: z.string().optional().describe("Language code, e.g. 'zh-cn'."),
 			},
-			async ({ query, num, tbs, location, gl, hl }: { query: string | string[]; num: number; tbs?: string; location?: string; gl?: string; hl?: string }) => {
+			async ({
+				query,
+				num,
+				tbs,
+				location,
+				gl,
+				hl,
+			}: {
+				query: string | string[];
+				num: number;
+				tbs?: string;
+				location?: string;
+				gl?: string;
+				hl?: string;
+			}) => {
 				try {
 					const props = getProps();
 
@@ -353,14 +543,19 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						return tokenError;
 					}
 
-					return await runSearchTool(query, (q) => ({ query: q, num, tbs, location, gl, hl }), (args: SearchWebArgs) => executeWebSearch(args, props.bearerToken));
+					return await runSearchTool(
+						query,
+						(q) => ({ query: q, num, tbs, location, gl, hl }),
+						(args: SearchWebArgs) => executeWebSearch(args, props.bearerToken),
+					);
 				} catch (error) {
-					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+					return createErrorResponse(
+						`Error: ${error instanceof Error ? error.message : String(error)}`,
+					);
 				}
 			},
 		);
 	}
-
 
 	// Search Arxiv tool - search arxiv papers using Jina Search API
 	if (isToolEnabled("search_arxiv")) {
@@ -368,11 +563,27 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"search_arxiv",
 			"Search arXiv preprints (physics, maths, CS, quantitative biology and finance).",
 			{
-				query: z.union([z.string(), z.array(z.string()).min(1).max(MAX_BATCH_SIZE)]),
+				query: z.union([
+					z.string(),
+					z.array(z.string()).min(1).max(MAX_BATCH_SIZE),
+				]),
 				num: z.number().int().min(1).max(10).default(10),
-				tbs: z.string().optional().describe("Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year).")
+				tbs: z
+					.string()
+					.optional()
+					.describe(
+						"Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year).",
+					),
 			},
-			async ({ query, num, tbs }: { query: string | string[]; num: number; tbs?: string }) => {
+			async ({
+				query,
+				num,
+				tbs,
+			}: {
+				query: string | string[];
+				num: number;
+				tbs?: string;
+			}) => {
 				try {
 					const props = getProps();
 
@@ -381,9 +592,16 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						return tokenError;
 					}
 
-					return await runSearchTool(query, (q) => ({ query: q, num, tbs }), (args: SearchArxivArgs) => executeArxivSearch(args, props.bearerToken));
+					return await runSearchTool(
+						query,
+						(q) => ({ query: q, num, tbs }),
+						(args: SearchArxivArgs) =>
+							executeArxivSearch(args, props.bearerToken),
+					);
 				} catch (error) {
-					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+					return createErrorResponse(
+						`Error: ${error instanceof Error ? error.message : String(error)}`,
+					);
 				}
 			},
 		);
@@ -395,11 +613,27 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"search_ssrn",
 			"Search SSRN working papers (social science, economics, law, finance, management).",
 			{
-				query: z.union([z.string(), z.array(z.string()).min(1).max(MAX_BATCH_SIZE)]),
+				query: z.union([
+					z.string(),
+					z.array(z.string()).min(1).max(MAX_BATCH_SIZE),
+				]),
 				num: z.number().int().min(1).max(10).default(10),
-				tbs: z.string().optional().describe("Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year).")
+				tbs: z
+					.string()
+					.optional()
+					.describe(
+						"Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year).",
+					),
 			},
-			async ({ query, num, tbs }: { query: string | string[]; num: number; tbs?: string }) => {
+			async ({
+				query,
+				num,
+				tbs,
+			}: {
+				query: string | string[];
+				num: number;
+				tbs?: string;
+			}) => {
 				try {
 					const props = getProps();
 
@@ -408,9 +642,16 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						return tokenError;
 					}
 
-					return await runSearchTool(query, (q) => ({ query: q, num, tbs }), (args: SearchSsrnArgs) => executeSsrnSearch(args, props.bearerToken));
+					return await runSearchTool(
+						query,
+						(q) => ({ query: q, num, tbs }),
+						(args: SearchSsrnArgs) =>
+							executeSsrnSearch(args, props.bearerToken),
+					);
 				} catch (error) {
-					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+					return createErrorResponse(
+						`Error: ${error instanceof Error ? error.message : String(error)}`,
+					);
 				}
 			},
 		);
@@ -422,11 +663,27 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"search_jina_blog",
 			"Search Jina AI's news and blog at jina.ai/news: product announcements, model releases, technical write-ups.",
 			{
-				query: z.union([z.string(), z.array(z.string()).min(1).max(MAX_BATCH_SIZE)]),
+				query: z.union([
+					z.string(),
+					z.array(z.string()).min(1).max(MAX_BATCH_SIZE),
+				]),
 				num: z.number().int().min(1).max(100).default(30),
-				tbs: z.string().optional().describe("Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year).")
+				tbs: z
+					.string()
+					.optional()
+					.describe(
+						"Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year).",
+					),
 			},
-			async ({ query, num, tbs }: { query: string | string[]; num: number; tbs?: string }) => {
+			async ({
+				query,
+				num,
+				tbs,
+			}: {
+				query: string | string[];
+				num: number;
+				tbs?: string;
+			}) => {
 				try {
 					const props = getProps();
 
@@ -437,11 +694,21 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					}
 
 					// Optional semantic reordering of the lexically matched posts
-					const rerankConfig = { bearerToken: props.bearerToken, apiBaseUrl: props.apiBaseUrl };
+					const rerankConfig = {
+						bearerToken: props.bearerToken,
+						apiBaseUrl: props.apiBaseUrl,
+					};
 
-					return await runSearchTool(query, (q) => ({ query: q, num, tbs }), (args: SearchJinaBlogArgs) => executeJinaBlogSearch(args, ghostApiKey, rerankConfig));
+					return await runSearchTool(
+						query,
+						(q) => ({ query: q, num, tbs }),
+						(args: SearchJinaBlogArgs) =>
+							executeJinaBlogSearch(args, ghostApiKey, rerankConfig),
+					);
 				} catch (error) {
-					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+					return createErrorResponse(
+						`Error: ${error instanceof Error ? error.message : String(error)}`,
+					);
 				}
 			},
 		);
@@ -455,13 +722,29 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			{
 				query: z.string(),
 				num: z.number().int().min(1).max(10).default(10),
-				return_url: z.boolean().default(false).describe("Return URLs and metadata instead of base64 images."),
-				tbs: z.string().optional().describe("Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year)."),
+				return_url: z
+					.boolean()
+					.default(false)
+					.describe("Return URLs and metadata instead of base64 images."),
+				tbs: z
+					.string()
+					.optional()
+					.describe(
+						"Age limit: qdr:h, qdr:d, qdr:w, qdr:m, qdr:y (hour to year).",
+					),
 				location: z.string().optional(),
 				gl: z.string().optional().describe("Country code, e.g. 'de'."),
-				hl: z.string().optional().describe("Language code, e.g. 'zh-cn'.")
+				hl: z.string().optional().describe("Language code, e.g. 'zh-cn'."),
 			},
-			async ({ query, num, return_url, tbs, location, gl, hl }: SearchImageArgs & { num: number }) => {
+			async ({
+				query,
+				num,
+				return_url,
+				tbs,
+				location,
+				gl,
+				hl,
+			}: SearchImageArgs & { num: number }) => {
 				try {
 					const props = getProps();
 
@@ -470,9 +753,12 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						return tokenError;
 					}
 
-					const searchResult = await executeImageSearch({ query, return_url, tbs, location, gl, hl }, props.bearerToken);
+					const searchResult = await executeImageSearch(
+						{ query, return_url, tbs, location, gl, hl },
+						props.bearerToken,
+					);
 
-					if ('error' in searchResult) {
+					if ("error" in searchResult) {
 						return createErrorResponse(searchResult.error);
 					}
 
@@ -482,7 +768,10 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					const data = { results: (searchResult.results || []).slice(0, num) };
 
 					// Prepare response content - always return as list structure for consistency
-					const contentItems: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [];
+					const contentItems: Array<
+						| { type: "text"; text: string }
+						| { type: "image"; data: string; mimeType: string }
+					> = [];
 
 					if (return_url) {
 						// Return each result as individual text items
@@ -523,7 +812,9 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 									mimeType: result.mimeType,
 								});
 							} else {
-								failures.push(`${result.url}: ${result.error || 'unknown error'}`);
+								failures.push(
+									`${result.url}: ${result.error || "unknown error"}`,
+								);
 							}
 						}
 
@@ -532,13 +823,13 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						// response - indistinguishable from "no images found".
 						if (contentItems.length === 0) {
 							return createErrorResponse(
-								`Found ${downloadResults.length} image(s) but none could be fetched:\n${failures.join('\n')}`
+								`Found ${downloadResults.length} image(s) but none could be fetched:\n${failures.join("\n")}`,
 							);
 						}
 						if (failures.length > 0) {
 							contentItems.push({
 								type: "text" as const,
-								text: `${failures.length} of ${downloadResults.length} image(s) could not be fetched:\n${failures.join('\n')}`,
+								text: `${failures.length} of ${downloadResults.length} image(s) could not be fetched:\n${failures.join("\n")}`,
 							});
 						}
 					}
@@ -547,16 +838,13 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						content: contentItems,
 					};
 				} catch (error) {
-					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+					return createErrorResponse(
+						`Error: ${error instanceof Error ? error.message : String(error)}`,
+					);
 				}
 			},
 		);
 	}
-
-
-
-
-
 
 	// Sort by relevance tool - rerank documents using Jina reranker API
 	if (isToolEnabled("sort_by_relevance")) {
@@ -565,10 +853,22 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"Rerank documents by relevance to a query, using Jina Reranker.",
 			{
 				query: z.string(),
-				documents: z.array(z.string()).min(1).max(1024).describe("Documents to rank, up to 1024."),
-				top_n: z.number().int().min(1).optional()
+				documents: z
+					.array(z.string())
+					.min(1)
+					.max(1024)
+					.describe("Documents to rank, up to 1024."),
+				top_n: z.number().int().min(1).optional(),
 			},
-			async ({ query, documents, top_n }: { query: string; documents: string[]; top_n?: number }) => {
+			async ({
+				query,
+				documents,
+				top_n,
+			}: {
+				query: string;
+				documents: string[];
+				top_n?: number;
+			}) => {
 				try {
 					const props = getProps();
 
@@ -582,21 +882,21 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					}
 
 					const response = await fetch(`${props.apiBaseUrl}/v1/rerank`, {
-						method: 'POST',
+						method: "POST",
 						signal: AbortSignal.timeout(RERANK_TIMEOUT_MS),
 						headers: {
-							'Accept': 'application/json',
-							'Content-Type': 'application/json',
-							'Authorization': `Bearer ${props.bearerToken}`,
+							Accept: "application/json",
+							"Content-Type": "application/json",
+							Authorization: `Bearer ${props.bearerToken}`,
 						},
 						body: JSON.stringify({
-							model: 'jina-reranker-v3.5',
+							model: "jina-reranker-v3.5",
 							query,
 							top_n: top_n || documents.length,
 							documents,
 							// The caller already holds the documents; the text is attached
 							// below by index instead of being sent back over the wire.
-							return_documents: false
+							return_documents: false,
 						}),
 					});
 
@@ -604,10 +904,10 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						return handleApiError(response, "Document reranking");
 					}
 
-					const data = await response.json() as any;
+					const data = (await response.json()) as any;
 
 					// Return each result as individual text items for consistency
-					const contentItems: Array<{ type: 'text'; text: string }> = [];
+					const contentItems: Array<{ type: "text"; text: string }> = [];
 
 					if (data.results && Array.isArray(data.results)) {
 						for (const result of data.results) {
@@ -626,7 +926,9 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						content: contentItems,
 					};
 				} catch (error) {
-					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+					return createErrorResponse(
+						`Error: ${error instanceof Error ? error.message : String(error)}`,
+					);
 				}
 			},
 		);
@@ -638,8 +940,19 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"deduplicate_strings",
 			"Select the top-k semantically distinct strings from a list, dropping near-duplicates.",
 			{
-				strings: z.array(z.string()).min(1).max(1000).describe("Strings to deduplicate, up to 1000."),
-				k: z.number().int().min(1).optional().describe("How many to keep. Omit to pick k automatically from diminishing returns.")
+				strings: z
+					.array(z.string())
+					.min(1)
+					.max(1000)
+					.describe("Strings to deduplicate, up to 1000."),
+				k: z
+					.number()
+					.int()
+					.min(1)
+					.optional()
+					.describe(
+						"How many to keep. Omit to pick k automatically from diminishing returns.",
+					),
 			},
 			async ({ strings, k }: { strings: string[]; k?: number }) => {
 				try {
@@ -655,23 +968,25 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					}
 
 					if (k !== undefined && (k <= 0 || k > strings.length)) {
-						throw new Error(`Invalid k value: ${k}. Must be between 1 and ${strings.length}`);
+						throw new Error(
+							`Invalid k value: ${k}. Must be between 1 and ${strings.length}`,
+						);
 					}
 
 					// Get embeddings from Jina API
 					const response = await fetch(`${props.apiBaseUrl}/v1/embeddings`, {
-						method: 'POST',
+						method: "POST",
 						signal: AbortSignal.timeout(EMBEDDINGS_TIMEOUT_MS),
 						headers: {
-							'Accept': 'application/json',
-							'Content-Type': 'application/json',
-							'Authorization': `Bearer ${props.bearerToken}`,
+							Accept: "application/json",
+							"Content-Type": "application/json",
+							Authorization: `Bearer ${props.bearerToken}`,
 						},
 						body: JSON.stringify({
-							model: 'jina-embeddings-v5-text-small',
-							task: 'text-matching',
-							embedding_type: 'base64',
-							input: strings
+							model: "jina-embeddings-v5-text-small",
+							task: "text-matching",
+							embedding_type: "base64",
+							input: strings,
 						}),
 					});
 
@@ -679,14 +994,16 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						return handleApiError(response, "Getting embeddings");
 					}
 
-					const data = await response.json() as any;
+					const data = (await response.json()) as any;
 
 					if (!data.data || !Array.isArray(data.data)) {
 						throw new Error("Invalid response format from embeddings API");
 					}
 
 					// Extract embeddings
-					const embeddings = data.data.map((item: any) => decodeBase64Embedding(item.embedding));
+					const embeddings = data.data.map((item: any) =>
+						decodeBase64Embedding(item.embedding),
+					);
 
 					// Use submodular optimization to select diverse strings
 					let selectedIndices: number[];
@@ -699,13 +1016,13 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					}
 
 					// Get the selected strings
-					const selectedStrings = selectedIndices.map(idx => ({
+					const selectedStrings = selectedIndices.map((idx) => ({
 						index: idx,
-						text: strings[idx]
+						text: strings[idx],
 					}));
 
 					// Return each deduplicated string as individual text items for consistency
-					const contentItems: Array<{ type: 'text'; text: string }> = [];
+					const contentItems: Array<{ type: "text"; text: string }> = [];
 
 					for (const selectedString of selectedStrings) {
 						contentItems.push({
@@ -718,13 +1035,13 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						content: contentItems,
 					};
 				} catch (error) {
-					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+					return createErrorResponse(
+						`Error: ${error instanceof Error ? error.message : String(error)}`,
+					);
 				}
 			},
 		);
 	}
-
-
 
 	// Extract PDF tool - extract figures, tables, and equations from PDF documents
 	if (isToolEnabled("extract_pdf")) {
@@ -732,12 +1049,39 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 			"extract_pdf",
 			"Extract figures, tables and equations from a PDF as images, by arXiv id or URL.",
 			{
-				id: z.string().optional().describe("arXiv id, e.g. '2301.12345'. Give id or url."),
-				url: z.string().url().optional().describe("PDF URL on arxiv.org, ssrn.com, openreview.net or aclanthology.org; other hosts are refused. Give id or url."),
-				max_edge: z.number().default(1024).describe("Longest image edge in pixels, default 1024."),
-				type: z.string().optional().describe("Comma-separated types to keep: figure, table, equation. Default all.")
+				id: z
+					.string()
+					.optional()
+					.describe("arXiv id, e.g. '2301.12345'. Give id or url."),
+				url: z
+					.string()
+					.url()
+					.optional()
+					.describe(
+						"PDF URL on arxiv.org, ssrn.com, openreview.net or aclanthology.org; other hosts are refused. Give id or url.",
+					),
+				max_edge: z
+					.number()
+					.default(1024)
+					.describe("Longest image edge in pixels, default 1024."),
+				type: z
+					.string()
+					.optional()
+					.describe(
+						"Comma-separated types to keep: figure, table, equation. Default all.",
+					),
 			},
-			async ({ id, url, max_edge, type }: { id?: string; url?: string; max_edge: number; type?: string }) => {
+			async ({
+				id,
+				url,
+				max_edge,
+				type,
+			}: {
+				id?: string;
+				url?: string;
+				max_edge: number;
+				type?: string;
+			}) => {
 				try {
 					const props = getProps();
 
@@ -747,7 +1091,9 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					}
 
 					if (!id && !url) {
-						return createErrorResponse("Either 'id' (arXiv paper ID) or 'url' (PDF URL) is required");
+						return createErrorResponse(
+							"Either 'id' (arXiv paper ID) or 'url' (PDF URL) is required",
+						);
 					}
 
 					// Build request body
@@ -757,13 +1103,13 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					if (max_edge) requestBody.max_edge = max_edge;
 					if (type) requestBody.type = type;
 
-					const response = await fetch('https://svip.jina.ai/extract-pdf', {
-						method: 'POST',
+					const response = await fetch("https://svip.jina.ai/extract-pdf", {
+						method: "POST",
 						signal: AbortSignal.timeout(EXTRACT_PDF_TIMEOUT_MS),
 						headers: {
-							'Accept': 'application/json',
-							'Content-Type': 'application/json',
-							'Authorization': `Bearer ${props.bearerToken}`,
+							Accept: "application/json",
+							"Content-Type": "application/json",
+							Authorization: `Bearer ${props.bearerToken}`,
 						},
 						body: JSON.stringify(requestBody),
 					});
@@ -772,7 +1118,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						return handleApiError(response, "PDF extraction");
 					}
 
-					const data = await response.json() as {
+					const data = (await response.json()) as {
 						id: string;
 						floats: Array<{
 							type: string;
@@ -800,7 +1146,10 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 					const floatsToReturn = floats.slice(0, maxFloats);
 
 					// Return each float as an image with metadata
-					const contentItems: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [];
+					const contentItems: Array<
+						| { type: "text"; text: string }
+						| { type: "image"; data: string; mimeType: string }
+					> = [];
 
 					// Add summary metadata. `floats`/`meta` are read defensively: an
 					// error-shaped 200 response used to throw a TypeError here and the
@@ -809,7 +1158,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						id: data?.id,
 						num_floats: data?.meta?.num_floats ?? totalFloats,
 						num_pages: data?.meta?.num_pages,
-						latency_ms: data?.meta?.latency
+						latency_ms: data?.meta?.latency,
 					};
 					if (totalFloats > maxFloats) {
 						summaryMeta.returned_floats = maxFloats;
@@ -831,7 +1180,7 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 								number: float.number,
 								caption: float.caption,
 								page: float.page,
-								dimensions: `${float.width}x${float.height}`
+								dimensions: `${float.width}x${float.height}`,
 							}),
 						});
 
@@ -847,7 +1196,97 @@ export function registerJinaTools(server: McpServer, getProps: () => any, enable
 						content: contentItems,
 					};
 				} catch (error) {
-					return createErrorResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
+					return createErrorResponse(
+						`Error: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+			},
+		);
+	}
+
+	// Deep research tool - performs iterative search, read, and reasoning loops via deepsearch.jina.ai
+	if (isToolEnabled("deep_research")) {
+		server.tool(
+			"deep_research",
+			"Perform multi-step deep research and reasoning using Jina DeepSearch (deepsearch.jina.ai). Iteratively plans, searches, reads, reflects, and synthesizes answers with citations.",
+			{
+				query: z
+					.string()
+					.describe(
+						"The research topic, question, or problem to investigate in depth.",
+					),
+				simplify: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe(
+						"If true, removes intermediate <think>...</think> reasoning traces and returns only the final research synthesis.",
+					),
+				budget_tokens: z
+					.number()
+					.int()
+					.min(1000)
+					.max(100000)
+					.optional()
+					.describe(
+						"Optional token budget / max completion tokens for the research response.",
+					),
+				temperature: z
+					.number()
+					.min(0)
+					.max(1)
+					.optional()
+					.describe("Sampling temperature (default 0.7)."),
+			},
+			async ({
+				query,
+				simplify,
+				budget_tokens,
+				temperature,
+			}: {
+				query: string;
+				simplify?: boolean;
+				budget_tokens?: number;
+				temperature?: number;
+			}) => {
+				try {
+					const props = getProps();
+
+					const tokenError = checkBearerToken(props.bearerToken);
+					if (tokenError) {
+						return tokenError;
+					}
+
+					const baseUrl =
+						(props.deepsearchBaseUrl as string) || "https://deepsearch.jina.ai";
+					const result = await executeDeepResearch(
+						{ query, simplify, budget_tokens, temperature },
+						props.bearerToken,
+						baseUrl,
+					);
+
+					if ("error" in result) {
+						return createErrorResponse(result.error);
+					}
+
+					return applyTokenGuardrail(
+						{
+							content: [
+								{
+									type: "text" as const,
+									text: result.content,
+								},
+							],
+						},
+						props.bearerToken,
+						getClientName(),
+						props.apiBaseUrl,
+						props.maxResponseTokens,
+					);
+				} catch (error) {
+					return createErrorResponse(
+						`Error: ${error instanceof Error ? error.message : String(error)}`,
+					);
 				}
 			},
 		);
